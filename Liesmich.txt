@@ -5,6 +5,8 @@ Aktuelle Version: siehe Info-Fenster (Klick auf die Versionsnummer) bzw.
 Eigenschaften > Details der EXE. Vorgänger: Monitor Dimmer 1.3.2017.0120
 
 Versionen:
+  2.48.2026.1101 Neues Programm-Icon (Mond als echte Sichel), Screenshots
+                 aktualisiert
   2.46.2026.1101 Alten Programmnamen aus Texten, Konfiguration und Programm
                  entfernt; Abfrage "alter Monitor Dimmer läuft noch" entfällt
   2.45.2026.1101 Fenster mit fester Größe: Rand wie in den anderen Programmen
