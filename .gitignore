@@ -1,0 +1,20 @@
+# Gebaute Programme und Build-Ausgaben
+*.exe
+*.neu.exe
+Erstellen.log
+Quellcode/VersionInfo.cs
+
+# Sicherungen und Entwürfe
+Backup/
+Design/
+
+# Laufzeitdaten (persönliche Konfiguration, Protokolle, Absturzberichte)
+Configurations/
+TraceLogs/
+UnhandledExceptions/
+*.ini
+Screenshots/Fehler.txt
+
+# Windows
+Thumbs.db
+desktop.ini

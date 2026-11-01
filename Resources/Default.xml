@@ -1,0 +1,76 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Configuration xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns="https://www.westmc002.de/MonitorDimmer/Configuration">
+  <!-- Startkonfiguration: wird beim ersten Start nach Configurations\Default.xml geschrieben.
+       Spiele, Monitorwerte und Aktionen danach im Programm einstellen (Tray-Menü). -->
+
+  <!-- Größe des Protokolls in Byte, 0 = 5 MB; danach wird es nach *.old.log verschoben -->
+  <TraceLogFileMaxSize>0</TraceLogFileMaxSize>
+  <CustomProductName>Monitor Dimmer</CustomProductName>
+  <!-- Sekunden, die nach dem Verlassen eines Spiels gewartet wird, bevor entdimmt wird (Alt+Tab, Overlays) -->
+  <UndimDelaySeconds>3</UndimDelaySeconds>
+  <!-- Sekunden Wartezeit vor dem erneuten Anwenden, wenn ein Monitor eingeschaltet oder die Auflösung geändert wurde -->
+  <ReapplyDelaySeconds>3</ReapplyDelaySeconds>
+  <!-- Tastenkürzel. Aktionen: TogglePause, Automatic, SetProfile (Profile=...), AddForegroundProcess (Profile=...), Reapply -->
+  <Hotkeys>
+    <Hotkey Keys="Ctrl+Alt+F7" Action="TogglePause" />
+    <Hotkey Keys="Ctrl+Alt+F8" Action="Automatic" />
+    <Hotkey Keys="Ctrl+Alt+F9" Action="SetProfile" Profile="Undimmed" />
+    <Hotkey Keys="Ctrl+Alt+F10" Action="SetProfile" Profile="Dimmed" />
+    <Hotkey Keys="Ctrl+Alt+F11" Action="AddForegroundProcess" Profile="Dimmed" />
+    <Hotkey Keys="Ctrl+Alt+F12" Action="Reapply" />
+  </Hotkeys>
+
+  <DimmingProfiles>
+
+    <!-- Normalzustand ohne Spiel. Handle = Nummer des Monitors (0, 1, 2 ...), Werte 0 bis 100 -->
+    <DimmingProfile Name="Undimmed" IsDefiningUndimmedState="true">
+      <DisplayName>Deaktiviert (Ungedimmt)</DisplayName>
+      <PhysicalMonitorProfiles>
+        <PhysicalMonitorProfile Handle="0">
+          <BrightnessValue>75</BrightnessValue>
+          <ContrastValue>65</ContrastValue>
+        </PhysicalMonitorProfile>
+        <PhysicalMonitorProfile Handle="1">
+          <BrightnessValue>75</BrightnessValue>
+          <ContrastValue>65</ContrastValue>
+        </PhysicalMonitorProfile>
+        <PhysicalMonitorProfile Handle="2">
+          <BrightnessValue>75</BrightnessValue>
+          <ContrastValue>65</ContrastValue>
+        </PhysicalMonitorProfile>
+      </PhysicalMonitorProfiles>
+    </DimmingProfile>
+
+    <!-- Wird angewendet, solange ein Spiel aus der Liste im Vordergrund läuft:
+         Monitor 1 (Spielmonitor) bleibt hell, die übrigen werden dunkel -->
+    <DimmingProfile Name="Dimmed" AutoApplicationEnabled="true" MousePointerTrackerEnabled="false" ForegroundWindowTrackerEnabled="true">
+      <DisplayName>Aktiviert (Alle Monitore gedimmt)</DisplayName>
+      <PhysicalMonitorProfiles>
+        <PhysicalMonitorProfile Handle="0">
+          <BrightnessValue>0</BrightnessValue>
+          <ContrastValue>0</ContrastValue>
+        </PhysicalMonitorProfile>
+        <PhysicalMonitorProfile Handle="1">
+          <BrightnessValue>75</BrightnessValue>
+          <ContrastValue>65</ContrastValue>
+        </PhysicalMonitorProfile>
+        <PhysicalMonitorProfile Handle="2">
+          <BrightnessValue>0</BrightnessValue>
+          <ContrastValue>0</ContrastValue>
+        </PhysicalMonitorProfile>
+      </PhysicalMonitorProfiles>
+      <!-- Spiele: vollständiger Pfad, * und ? sind erlaubt, z. B. C:\Spiele\Battlefield*\bf*.exe;
+           ein Eintrag ohne Pfad (nur z. B. bf6.exe) gilt für das Programm in jedem Ordner -->
+      <ProcessExecutableFilePaths>
+      </ProcessExecutableFilePaths>
+      <Actions>
+        <OnApplied>
+        </OnApplied>
+        <OnUnapplied>
+        </OnUnapplied>
+      </Actions>
+    </DimmingProfile>
+
+  </DimmingProfiles>
+
+</Configuration>

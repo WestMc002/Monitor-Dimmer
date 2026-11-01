@@ -1,0 +1,137 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Configuration xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns="https://www.westmc002.de/MonitorDimmer/Configuration">
+  <!-- Beispieldaten nur für die Screenshots (Aufruf "Monitor Dimmer.exe" mit dem Parameter screenshots). Alle Spiele sind erfunden. -->
+  <TraceLogFileMaxSize>0</TraceLogFileMaxSize>
+  <CustomProductName>Monitor Dimmer</CustomProductName>
+  <UndimDelaySeconds>3</UndimDelaySeconds>
+  <ReapplyDelaySeconds>3</ReapplyDelaySeconds>
+  <Hotkeys>
+    <Hotkey Keys="Ctrl+Alt+F7" Action="TogglePause" />
+    <Hotkey Keys="Ctrl+Alt+F8" Action="Automatic" />
+    <Hotkey Keys="Ctrl+Alt+F9" Action="SetProfile" Profile="Undimmed" />
+    <Hotkey Keys="Ctrl+Alt+F10" Action="SetProfile" Profile="Dimmed" />
+    <Hotkey Keys="Ctrl+Alt+F11" Action="AddForegroundProcess" Profile="Dimmed" />
+    <Hotkey Keys="Ctrl+Alt+F12" Action="Reapply" />
+  </Hotkeys>
+  <DimmingProfiles>
+    <DimmingProfile Name="Undimmed" IsDefiningUndimmedState="true">
+      <DisplayName>Deaktiviert (Ungedimmt)</DisplayName>
+      <PhysicalMonitorProfiles>
+        <PhysicalMonitorProfile Handle="0">
+          <BrightnessValue>75</BrightnessValue>
+          <ContrastValue>65</ContrastValue>
+        </PhysicalMonitorProfile>
+        <PhysicalMonitorProfile Handle="1">
+          <BrightnessValue>75</BrightnessValue>
+          <ContrastValue>65</ContrastValue>
+        </PhysicalMonitorProfile>
+        <PhysicalMonitorProfile Handle="2">
+          <BrightnessValue>75</BrightnessValue>
+          <ContrastValue>65</ContrastValue>
+        </PhysicalMonitorProfile>
+      </PhysicalMonitorProfiles>
+    </DimmingProfile>
+    <DimmingProfile Name="Dimmed" AutoApplicationEnabled="true" MousePointerTrackerEnabled="false" ForegroundWindowTrackerEnabled="true">
+      <DisplayName>Aktiviert (Alle Monitore gedimmt)</DisplayName>
+      <PhysicalMonitorProfiles>
+        <PhysicalMonitorProfile Handle="0">
+          <BrightnessValue>0</BrightnessValue>
+          <ContrastValue>0</ContrastValue>
+        </PhysicalMonitorProfile>
+        <PhysicalMonitorProfile Handle="1">
+          <BrightnessValue>75</BrightnessValue>
+          <ContrastValue>65</ContrastValue>
+        </PhysicalMonitorProfile>
+        <PhysicalMonitorProfile Handle="2">
+          <BrightnessValue>0</BrightnessValue>
+          <ContrastValue>0</ContrastValue>
+        </PhysicalMonitorProfile>
+      </PhysicalMonitorProfiles>
+      <ProcessExecutableFilePaths>
+        <ProcessExecutableFilePath>C:\Spiele\Asteroid Miner\AsteroidMiner.exe</ProcessExecutableFilePath>
+        <ProcessExecutableFilePath>C:\Spiele\Frontline 19*\frontline*.exe</ProcessExecutableFilePath>
+        <ProcessExecutableFilePath>C:\Spiele\Night Racer\NightRacer.exe</ProcessExecutableFilePath>
+        <ProcessExecutableFilePath>C:\Spiele\Pixel Kingdom\PixelKingdom.exe</ProcessExecutableFilePath>
+        <ProcessExecutableFilePath>C:\Spiele\Starfall Tactics\bin\Starfall.exe</ProcessExecutableFilePath>
+        <ProcessExecutableFilePath>D:\SteamLibrary\steamapps\common\Iron Harbor\IronHarbor.exe</ProcessExecutableFilePath>
+        <ProcessExecutableFilePath>D:\SteamLibrary\steamapps\common\Lost Signal\LostSignal.exe</ProcessExecutableFilePath>
+        <ProcessExecutableFilePath>retrorunner.exe</ProcessExecutableFilePath>
+      </ProcessExecutableFilePaths>
+      <Actions>
+        <OnApplied>
+          <Action Type="PowerPlan" Value="8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c" />
+          <Action Type="KillProcess" Value="SyncTool.exe" />
+          <Action Type="StopService" Value="SyncToolService" />
+          <Action Type="AudioDevice" Value="Headset" />
+        </OnApplied>
+        <OnUnapplied>
+          <Action Type="PowerPlan" Value="381b4222-f694-41f0-9685-ff5bb260df2e" />
+          <Action Type="StartService" Value="SyncToolService" />
+          <Action Type="StartProgram" Value="C:\Program Files\SyncTool\SyncTool.exe" />
+          <Action Type="AudioDevice" Value="Lautsprecher" />
+        </OnUnapplied>
+      </Actions>
+    </DimmingProfile>
+    <DimmingProfile Name="Dimmed_right" AutoApplicationEnabled="true" MousePointerTrackerEnabled="false" ForegroundWindowTrackerEnabled="true">
+      <DisplayName>Aktiviert (Gedimmt, rechter Monitor heller)</DisplayName>
+      <PhysicalMonitorProfiles>
+        <PhysicalMonitorProfile Handle="0">
+          <BrightnessValue>40</BrightnessValue>
+          <ContrastValue>30</ContrastValue>
+        </PhysicalMonitorProfile>
+        <PhysicalMonitorProfile Handle="1">
+          <BrightnessValue>75</BrightnessValue>
+          <ContrastValue>65</ContrastValue>
+        </PhysicalMonitorProfile>
+        <PhysicalMonitorProfile Handle="2">
+          <BrightnessValue>0</BrightnessValue>
+          <ContrastValue>0</ContrastValue>
+        </PhysicalMonitorProfile>
+      </PhysicalMonitorProfiles>
+      <ProcessExecutableFilePaths>
+        <ProcessExecutableFilePath>C:\Spiele\City Planner 2\CityPlanner2.exe</ProcessExecutableFilePath>
+        <ProcessExecutableFilePath>C:\Spiele\Farm Valley\FarmValley.exe</ProcessExecutableFilePath>
+      </ProcessExecutableFilePaths>
+      <Actions>
+        <OnApplied>
+
+        </OnApplied>
+        <OnUnapplied>
+
+        </OnUnapplied>
+      </Actions>
+    </DimmingProfile>
+    <DimmingProfile Name="Virtual_Reality" AutoApplicationEnabled="true" MousePointerTrackerEnabled="false" ForegroundWindowTrackerEnabled="true">
+      <DisplayName>Aktiviert (Virtual Reality)</DisplayName>
+      <PhysicalMonitorProfiles>
+        <PhysicalMonitorProfile Handle="0">
+          <BrightnessValue>75</BrightnessValue>
+          <ContrastValue>65</ContrastValue>
+        </PhysicalMonitorProfile>
+        <PhysicalMonitorProfile Handle="1">
+          <BrightnessValue>75</BrightnessValue>
+          <ContrastValue>65</ContrastValue>
+        </PhysicalMonitorProfile>
+        <PhysicalMonitorProfile Handle="2">
+          <BrightnessValue>75</BrightnessValue>
+          <ContrastValue>65</ContrastValue>
+        </PhysicalMonitorProfile>
+      </PhysicalMonitorProfiles>
+      <ProcessExecutableFilePaths>
+        <ProcessExecutableFilePath>C:\Spiele\Deep Ocean VR\DeepOceanVR.exe</ProcessExecutableFilePath>
+        <ProcessExecutableFilePath>C:\Spiele\Sky Pilot VR\SkyPilot.exe</ProcessExecutableFilePath>
+      </ProcessExecutableFilePaths>
+      <Actions>
+        <OnApplied>
+          <Action Type="KillProcess" Value="SyncTool.exe" />
+          <Action Type="Wait" Value="2" />
+          <Action Type="AudioDevice" Value="VR-Headset" />
+        </OnApplied>
+        <OnUnapplied>
+          <Action Type="StartProgram" Value="C:\Program Files\SyncTool\SyncTool.exe" />
+          <Action Type="AudioDevice" Value="Lautsprecher" />
+        </OnUnapplied>
+      </Actions>
+    </DimmingProfile>
+  </DimmingProfiles>
+</Configuration>

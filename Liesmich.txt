@@ -1,0 +1,267 @@
+MONITOR DIMMER 2
+================
+
+Aktuelle Version: siehe Info-Fenster (Klick auf die Versionsnummer) bzw.
+Eigenschaften > Details der EXE. Vorgänger: Monitor Dimmer 1.3.2017.0120
+
+Versionen:
+  2.46.2026.1101 Alten Programmnamen aus Texten, Konfiguration und Programm
+                 entfernt; Abfrage "alter Monitor Dimmer läuft noch" entfällt
+  2.45.2026.1101 Fenster mit fester Größe: Rand wie in den anderen Programmen
+                 behandelt (HTCLIENT statt HTBORDER)
+  2.43.2026.1101 Screenshots: Tastenkürzel zeigen "aktiv" statt "neu / geändert"
+  2.42.2026.1101 Erstellen.bat fragt, ob Screenshots erstellt werden sollen
+                 (ohne Antwort nach 10 Sekunden Nein, bei /nopause nie);
+                 Titelbild hell.png war leer; Info-Fenster in den Screenshots ohne
+                 eigenen Programmpfad; Menükopf wird bei langem Status breiter
+                 statt den Text abzuschneiden
+  2.40.2026.1031 Vorbereitung für GitHub: Lizenzkopf (GPL v3) in allen
+                 Quelldateien, README.md, .gitignore, Startkonfiguration für
+                 den ersten Start (Resources\Default.xml, in die EXE eingebettet),
+                 Screenshots automatisch beim Erstellen ("Monitor Dimmer.exe"
+                 --screenshots): Tray-Menü und Fenster mit erfundenen Beispiel-
+                 daten (Resources\Demo.xml), hell und dunkel, nach Screenshots
+  2.39.2026.1031 Auswahllisten im Windows-11-Stil: abgerundetes Feld, feiner
+                 Rahmen, Chevron rechts, Akzent-Linie bei Fokus, Höhe 32,
+                 aufgeklappte Liste mit runden Ecken
+  2.31.2026.1030 Spieleliste: Spalten verschwinden nicht mehr beim Überfahren mit
+                 der Maus, Menüs ohne Untermenüs und Tastenkürzel (z. B. "In Profil
+                 verschieben") ohne leere Symbolspalte, links und rechts gleicher
+                 Rand; Menüs nach den globalen Vorgaben: Text senkrecht in der
+                 Zeilenmitte (nach Buchstabenmitte), Symbole nach sichtbaren Pixeln
+                 zentriert, unten unsichtbare Leerzeile mit 6 Einheiten,
+                 Aktionen > Kopieren nach: Profile mit Monitor-Symbol,
+                 kleinerer Abstand zwischen Symbol und Text in allen Menüs
+  2.24.2026.1030 Markierung in Listen und Tabellen im Windows-11-Stil
+                 (dezent grau mit Akzent-Balken statt kräftig blau),
+                 Auswahllisten mit Abstand zum linken Rand, Menüs mit optisch gleichem
+                 Abstand oben und unten (Rahmen bis Schrift), "In Profil verschieben"
+                 im modernen Menüstil, ohne eckigen Altschatten
+  2.21 - 2.23    Feinschliff Kontextmenü im Fenster "Aktionen" (Abstand oben)
+  2.20.2026.1030 Menü-Symbole, Haken, Schalter und Pfeile an der Schriftmitte
+                 ausgerichtet; Kontextmenü im Fenster "Aktionen" im Stil des Tray-Menüs,
+                 ungenutzten Code entfernt
+  2.19.2026.1030 Erstellen.bat ohne grauen Fensterhintergrund (COLOR 80)
+  2.18.2026.1030 Erstellen.bat nach aktualisierter Vorlage (VersionInfo.cs in Quellcode)
+  2.17.2026.1030 Prüfung der Aktionen (rot/gelb), Untermenüs unten 4 px Rand,
+                 Erstellen.bat nach Vorlage, EXE heißt jetzt "Monitor Dimmer.exe"
+  2.16.2026.1030 Aktionen kopieren, Beendete wieder starten, VR-Profil erweitert
+  2.15.2026.1030 Aktionen statt .bat-Skripte (Fenster "Aktionen")
+  2.14.2026.1030 14 alte Icons aus Resources entfernt
+  2.13.2026.1030 Info-Fenster und "Tastenkürzel bearbeiten" mit normalem Rahmen
+  2.12.2026.1030 Fenster "Monitore" mit normalem Rahmen (Größe bleibt fest)
+  2.11.2026.1030 Sicherung direkt in Erstellen.bat (ohne Sichern.ps1)
+  2.10.2026.1030 Farben und Ecken nach Windows 11
+  2.9.2026.1030  Erstellen.bat liegt im Hauptordner
+  2.8.2026.1030  Windows-Akzentfarbe für Knöpfe und Hervorhebungen
+  2.7.2026.1030  Info-Fenster (Klick auf die Versionsnummer)
+  2.6.2026.1030  Fußzeile mit GS-Logo in allen Fenstern
+  2.5.2026.1029  Skripte beim Entdimmen erst, wenn das Spiel beendet ist
+  2.4.2026.1029  Projektsicherung je Version beim Erstellen (Ordner Backup)
+  2.3.2026.1029  Versionierte Sicherungen der Konfiguration
+  2.2.2026.1029  Neues Fensterdesign (Kopfbereich, Karten, runde Knöpfe)
+  2.1.2026.1029  Dunkles Design für alle Fenster
+  2.0.2026.1029  Neuentwicklung (Menü, Fenster, Tastenkürzel, Spieleliste)
+  1.3.2017.0120  Monitor Dimmer 1.3 (Vorgänger)
+
+Neuentwicklung des Monitor Dimmer 1.3 (2017) mit Erweiterungen.
+Die bisherige Konfiguration (Configurations\Default.xml) wird weiter gelesen.
+Fehlt sie, legt das Programm beim ersten Start eine Startkonfiguration an
+(eingebettet aus Resources\Default.xml).
+
+Voraussetzung: Windows 10/11 (.NET Framework 4.x ist dort immer vorhanden).
+
+
+ERSTELLEN
+---------
+Erstellen.bat im Hauptordner doppelklicken (nach der Standard-Vorlage
+"Vorlage Erstellen.bat"). Ablauf:
+- wartet, bis "Monitor Dimmer.exe" beendet ist,
+- zählt die Version automatisch hoch: Haupt.Neben.Jahr.MonatTag, die
+  Nebenversion ist die höchste vorhandene (EXE und Backup) + 1,
+- erzeugt Quellcode\VersionInfo.cs und kompiliert alle .cs-Dateien aus
+  Quellcode erst nach "Monitor Dimmer.neu.exe";
+  bei einem Fehler bleibt die bisherige EXE unverändert (siehe Erstellen.log),
+- verschiebt die bisherige EXE nach Backup\Monitor Dimmer v<alte Version>,
+  falls es diesen Ordner noch nicht gibt, und setzt die neue an ihren Platz,
+- sichert danach das komplette Projekt nach Backup\Monitor Dimmer v<Version>.
+Logo (Resources\GS-Logo.png) und Icon werden zusätzlich in die EXE eingebettet.
+Mit dem Parameter /nopause endet das Skript ohne Tastendruck.
+Ältere Version zurückholen: Monitor Dimmer beenden, "Monitor Dimmer.exe" aus
+dem gewünschten Ordner unter Backup in den Hauptordner kopieren und starten.
+Die Konfiguration hat ihre eigenen Sicherungen (Configurations\Sicherungen).
+
+
+ERSTER START
+------------
+1. "Monitor Dimmer.exe" starten. Für Aktionen wie "Dienst beenden" mit
+   Rechtsklick "Als Administrator ausführen".
+2. Im Tray-Menü "Monitore anzeigen..." prüfen, welche Nummer (Handle) zu
+   welchem Monitor gehört, und die Profile anpassen.
+3. Im Tray-Menü "Mit Windows starten (mit Adminrechten)" anhaken. Das legt
+   eine Aufgabe "Monitor Dimmer" in der Aufgabenplanung an (Start 15 s nach
+   der Anmeldung, mit Adminrechten, ohne UAC-Abfrage).
+
+
+WAS IST NEU
+-----------
+- Tray-Menü:
+  * Modernes Menü im Windows-11-Stil (runde Ecken, Symbole, Status oben,
+    folgt dem hellen/dunklen Windows-Design, zeigt die Tastenkürzel an)
+  * Automatik oder ein Profil fest erzwingen (wie bisher)
+  * "<spiel>.exe zur Spieleliste hinzufügen": nimmt das zuletzt aktive
+    Programm in ein Profil auf, ohne die XML von Hand zu bearbeiten
+  * Monitore anzeigen: grafische Übersicht (Anordnung, Helligkeit,
+    Kontrast, Werte je Profil). Solange das Fenster offen ist, steht auf
+    jedem Monitor groß seine Handle-Nummer.
+  * Spieleliste bearbeiten: je Profil alle Spiele mit Icon und Status
+    (gefunden/fehlt), hinzufügen, entfernen, alle fehlenden entfernen,
+    in ein anderes Profil verschieben, Ordner öffnen
+  * "Neue / fehlende suchen...": durchsucht C:\Spiele samt Unterordnern
+    (auch steamapps\common) in einem Durchgang:
+    - fehlende Programme werden nach Dateinamen gesucht (neuer Pfad),
+    - Spielordner ohne Eintrag werden als neue Spiele vorgeschlagen, mit der
+      wahrscheinlichen Haupt-exe (Installer, Redist, Anti-Cheat usw. werden
+      aussortiert, weitere exe-Dateien sind per Auswahlliste wählbar).
+    Neue Spiele landen im gerade gewählten Profil. "Nicht mehr vorschlagen"
+    merkt den Ordner in Default.xml unter <IgnoredGameFolders>.
+    Weitere Suchordner optional in Default.xml:
+      <GameSearchFolders>
+        <Folder>C:\Spiele</Folder>
+        <Folder>D:\Spiele</Folder>
+      </GameSearchFolders>
+  * Die Liste wird immer alphabetisch sortiert, ohne Doppelte und einheitlich
+    eingerückt gespeichert. Vorher wird eine Sicherung angelegt (siehe unten).
+  * Konfiguration bearbeiten/neu laden, Protokoll öffnen
+  * Doppelklick auf das Symbol = Pause ein/aus
+- Dunkles Design: Menü und alle Fenster richten sich automatisch nach Windows
+  (Einstellungen > Personalisierung > Farben). Das Menü folgt dem
+  Windows-Modus, die Fenster dem App-Modus. Gilt ab dem nächsten Öffnen.
+- Sicherungen der Konfiguration mit Versionen: Vor jedem Speichern aus dem
+  Programm, beim Start und nach jeder Änderung von Hand wird der Stand von
+  Default.xml nach Configurations\Sicherungen kopiert, z. B.
+  Default_2026-10-29_153012.xml. Gleiche Stände werden nicht doppelt
+  gesichert, die neuesten 50 bleiben erhalten. Tray-Menü: Einstellungen >
+  "Sicherungen öffnen". Zurückholen: Datei nach Configurations kopieren und
+  in Default.xml umbenennen (wird automatisch neu geladen). Eine alte
+  Default.xml.bak wird einmalig dorthin übernommen.
+  Gespeichert wird über eine Zwischendatei, Default.xml ist dadurch nie
+  halb geschrieben.
+- Farben wie Windows 11: neutrale Grautöne (Hintergrund #F3F3F3 bzw. #202020,
+  Karten weiß bzw. #2B2B2B), Text, Statusfarben Grün/Rot und Eckenradien
+  (Knöpfe 4, Karten 8 Pixel) entsprechen den Windows-11-Vorgaben.
+- Akzentfarbe: Der blaue Hauptknopf, die Versionsnummer, der Hinweisbalken
+  und der Link in der Fußzeile verwenden die Windows-Akzentfarbe
+  (Einstellungen > Personalisierung > Farben), in den gleichen Abstufungen
+  wie Windows 11. Bei sehr hellen Akzentfarben wird die Knopfschrift dunkel.
+  Gilt ab dem nächsten Öffnen eines Fensters. Festes Blau statt Akzentfarbe:
+    <UseWindowsAccentColor>false</UseWindowsAccentColor>
+- Platzhalter in ProcessExecutableFilePath: * und ?
+  z. B. C:\Spiele\Battlefield*\bf*.exe
+  Nur ein Dateiname (z. B. bf6.exe) gilt für jeden Ordner.
+- Tastenkürzel: im Tray-Menü unter "Tastenkürzel..." anzeigen, hinzufügen,
+  ändern und entfernen (Kombination einfach drücken). Gespeichert wird in
+  Configurations\Default.xml im Abschnitt <Hotkeys>, dort auch von Hand
+  änderbar. Änderungen gelten sofort.
+    <Hotkeys>
+      <Hotkey Keys="Ctrl+Alt+F9"  Action="TogglePause" />
+      <Hotkey Keys="Ctrl+Alt+F10" Action="AddForegroundProcess" Profile="Dimmed" />
+      <Hotkey Keys="Ctrl+Alt+F11" Action="Reapply" />
+    </Hotkeys>
+  Tasten: Ctrl/Strg, Alt, Shift/Umschalt, Win + eine Taste (A-Z, 0-9,
+  F1-F24, NumPad0-9, Pause, Insert, Home, End, PageUp, PageDown ...).
+  Aktionen (Name im Fenster / Name in der XML):
+    Umschalten: Deaktiviert <-> Automatik   TogglePause
+    Umschalten: Profil <-> Automatik        EnforceProfile (Profile="...")
+    Profil erzwingen                        SetProfile (Profile="...")
+    Automatik einschalten                   Automatic
+    Aktives Spiel zur Liste hinzufügen      AddForegroundProcess (Profile="...")
+    Profil erneut anwenden                  Reapply
+    Monitore anzeigen                       ShowMonitors
+    Spieleliste öffnen                      ShowGameList
+  Im Fenster "Tastenkürzel" erklärt das "?" bzw. der Mauszeiger über einem
+  Eintrag, was die jeweilige Aktion genau macht.
+  Ist eine Kombination schon von einem anderen Programm belegt, erscheint
+  ein Hinweis und der Eintrag im Protokoll.
+- Aktionen (Tray-Menü > "Aktionen..."): Was beim Aktivieren und beim
+  Deaktivieren eines Profils passiert, wird im Fenster zusammengestellt statt
+  in .bat-Skripten. Bausteine: Programm beenden/starten, Dienst
+  beenden/starten (wartet höchstens 60 s), Energiesparplan wählen,
+  Audiogerät als Standard (ohne NirCmd), Aufgabe ausführen/aktivieren/
+  deaktivieren, Warten, Befehl ausführen. Werte lassen sich aus Listen wählen
+  (laufende Programme, Dienste, Energiesparpläne, Wiedergabegeräte, eigene
+  Aufgaben). "Jetzt testen" führt eine Liste sofort aus.
+  "Beendete wieder starten" (für "Beim Deaktivieren"): startet genau die
+  Programme und Dienste wieder, die "Beim Aktivieren" dieses Profils beendet
+  wurden - nur was vorher lief, mit den ursprünglichen Startparametern
+  (z. B. --minimized). Die Liste steht bis dahin in
+  Configurations\Beendete Programme.txt und übersteht so auch einen
+  Neustart. Store-Apps (z. B. Smartphone-Link) startet Windows selbst.
+  Programme werden immer ohne Adminrechte gestartet (wie aus dem Startmenü),
+  auch wenn der Monitor Dimmer mit Adminrechten läuft.
+  Prüfung: Aktionen mit Fehler stehen rot in der Liste (exe-Datei fehlt,
+  Aufgabe oder Energiesparplan gibt es nicht), Hinweise gelb (Dienst nicht
+  vorhanden - wird übersprungen, Audiogerät gerade nicht angeschlossen).
+  Der Mauszeiger über dem Eintrag zeigt den Grund, oben steht die Anzahl.
+  "Kopieren nach" (auch per Rechtsklick in der Liste): die markierte Aktion
+  oder die ganze Liste in ein anderes Profil oder alle anderen Profile
+  kopieren, jeweils in dieselbe Liste (Aktivieren bzw. Deaktivieren).
+  Schon vorhandene gleiche Aktionen werden nicht doppelt eingetragen.
+  "Skripte übernehmen" übersetzt die bisherigen .bat-Skripte aller Profile
+  einmalig in Aktionen; beim Speichern werden die <EventHandlers>-Einträge
+  entfernt (die .bat-Dateien bleiben liegen). Gespeichert wird in Default.xml:
+    <Actions>
+      <OnApplied>
+        <Action Type="PowerPlan" Value="8c5e7fda-..." />
+        <Action Type="KillProcess" Value="gsyncit.exe" />
+      </OnApplied>
+      <OnUnapplied>
+        <Action Type="StartProgram" Value="C:\...\gsyncit.exe" />
+        <Action Type="AudioDevice" Value="Realtek Digital Output" />
+      </OnUnapplied>
+    </Actions>
+  Programm beenden: erst normal (wie Fenster schließen), reagiert es nach
+  5 s nicht, wird es hart beendet. Nicht vorhandene Dienste werden still
+  übersprungen. Audiogerät wartet bis zu 60 s, bis das Gerät da ist (z. B.
+  VR-Headset wird eingeschaltet). Energiesparplan versteht auch SCHEME_MIN
+  (Höchstleistung), SCHEME_BALANCED und SCHEME_MAX.
+  Jede Aktion steht mit Ergebnis im Protokoll; eine fehlgeschlagene Aktion
+  hält die übrigen nicht auf.
+- Spiel verlassen, aber nicht beendet (Alt+Tab, Fenstermodus, minimiert):
+  Die Monitore werden entdimmt, die Skripte (Programme starten, Ton
+  umstellen ...) laufen aber erst, wenn das Spiel wirklich beendet ist.
+  Geht es zurück ins Spiel, wird nur wieder gedimmt, ohne die Skripte erneut
+  auszuführen. Im Tray-Tooltip steht solange "(Spiel läuft noch)".
+  Manuelles Umschalten (Menü, Tastenkürzel) führt die Skripte sofort aus.
+  Altes Verhalten (Skripte bei jedem Wechsel) in Default.xml:
+    <UndimScriptsOnGameExit>false</UndimScriptsOnGameExit>
+- Verzögerung beim Entdimmen (<UndimDelaySeconds>, Standard 3 s): kurzes
+  Alt+Tab oder ein Overlay löst nicht sofort die Skripte aus.
+- Profil wird automatisch neu gesetzt, wenn ein Monitor eingeschaltet wird,
+  sich die Auflösung ändert oder der PC aus dem Standby kommt.
+- Skripte laufen nacheinander, nie gleichzeitig (Wartezeit max. 2 Minuten).
+- Änderungen an Default.xml werden automatisch übernommen. Ist die Datei
+  fehlerhaft, bleiben die alten Einstellungen aktiv.
+- Beim Beenden, Abmelden und nach Abstürzen werden die Monitore entdimmt.
+- Protokoll wird bei 5 MB nach Default.old.log verschoben.
+- Fußzeile in allen Fenstern mit GS-Logo (Resources\GS-Logo.png), Name und
+  Website; ein Klick darauf öffnet www.westmc002.de.
+- Info-Fenster: Klick auf die blaue Versionsnummer oben in einem Fenster oder
+  Tray-Menü > Einstellungen > "Info über Monitor Dimmer". Zeigt Logo,
+  Version, Entwickler, Erstelldatum, Farbschema und Programmordner, dazu
+  Knöpfe für die Anleitung (Liesmich.txt) und die Konfigurations-Sicherungen.
+- Eigenes Icon (Resources\MonitorDimmer.ico). Ein anderes Tray-Icon (.ico
+  in Resources) lässt sich über <CustomTrayIconFilePath> wählen.
+- Flachere Ordnerstruktur: Configurations, Resources, TraceLogs und
+  UnhandledExceptions ohne Unterordner "MonitorDimmer". Beim ersten Start
+  werden die Dateien automatisch umgezogen.
+- Pfad "3D M?hle" in der Konfiguration korrigiert (Umlaut war verloren).
+
+
+HINWEIS ZU DEN SKRIPTEN
+-----------------------
+OnAfterDimmingProfileApplied(VR).bat wartet in einer Schleife, bis der
+TeamViewer-Dienst gestoppt ist. Ohne Adminrechte schlägt "net stop" fehl und
+die Schleife endet nie. Der Monitor Dimmer wartet dann höchstens 2 Minuten und
+läuft weiter, das hängende cmd.exe bleibt aber im Hintergrund. Daher das
+Programm mit Adminrechten starten (Autostart-Aufgabe erledigt das).

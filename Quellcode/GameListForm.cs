@@ -1,0 +1,600 @@
+// Monitor Dimmer – Fenster „Spieleliste“
+// Copyright (C) 2026 Günther Schoder · https://www.westmc002.de
+// Lizenz: GNU General Public License v3.0 oder später (siehe LICENSE)
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.Drawing;
+using System.IO;
+using System.Linq;
+using System.Windows.Forms;
+
+namespace MonitorDimmer
+{
+    /// <summary>Fenster mittig auf den Bildschirm setzen, auf dem die Maus ist (nie unter die Taskleiste).</summary>
+    internal static class WindowPlacement
+    {
+        public static void Center(Form f)
+        {
+            var area = Screen.FromPoint(Cursor.Position).WorkingArea;
+            int margin = 24;
+            if (f.Width > area.Width - margin) f.Width = area.Width - margin;
+            if (f.Height > area.Height - margin) f.Height = area.Height - margin;
+            f.Location = new Point(area.Left + (area.Width - f.Width) / 2, area.Top + (area.Height - f.Height) / 2);
+        }
+    }
+
+    /// <summary>Spieleliste je Profil anzeigen, prüfen und bearbeiten.</summary>
+    internal sealed class GameListForm : Form
+    {
+        private static Color CBack { get { return Theme.Map(Color.FromArgb(243, 243, 243)); } }
+        private static Color CText { get { return Theme.Map(Color.FromArgb(27, 27, 27)); } }
+        private static Color CMuted { get { return Theme.Map(Color.FromArgb(97, 97, 97)); } }
+        private static Color COk { get { return Theme.Map(Color.FromArgb(15, 123, 15)); } }
+        private static Color CMissing { get { return Theme.Map(Color.FromArgb(196, 43, 28)); } }
+        private static Color CInfo { get { return Theme.Map(Color.FromArgb(91, 123, 213)); } }
+
+        private static GameListForm _instance;
+
+        private readonly Func<AppConfig> _config;
+        private readonly Action<string, List<string>> _save;
+        private readonly Action<List<string>> _ignore;
+        private readonly ComboBox _profile;
+        private readonly ListView _list;
+        private readonly Label _summary;
+        private readonly ImageList _icons;
+        private readonly ModernButton _moveButton;
+        private readonly ModernButton _searchButton;
+        private float k = 1f;
+
+        private enum EntryState { Found, Missing, Wildcard, FileNameOnly, NotCheckable }
+
+        private sealed class Entry
+        {
+            public string Raw;
+            public EntryState State;
+        }
+
+        private static readonly HashSet<string> GenericFolders = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "bin", "bin32", "bin64", "binaries", "win32", "win64", "x86", "x64", "_retail_", "retail", "game",
+            "launcher", "sources", "en_us", "sp22", "shipping", "client", "release", "sp", "mp", "system", "src",
+            "data", "exe", "program", "programs", "x64_ship", "x86_ship"
+        };
+
+        public static void ShowWindow(Func<AppConfig> config, Action<string, List<string>> save, Action<List<string>> ignore, Icon icon)
+        {
+            if (_instance != null && !_instance.IsDisposed)
+            {
+                _instance.Reload();
+                _instance.Activate();
+                return;
+            }
+            _instance = new GameListForm(config, save, ignore, icon);
+            _instance.Show();
+        }
+
+        /// <summary>Nach dem Neuladen der Konfiguration die offene Liste aktualisieren.</summary>
+        public static void RefreshIfOpen()
+        {
+            if (_instance != null && !_instance.IsDisposed) _instance.Reload();
+        }
+
+        internal GameListForm(Func<AppConfig> config, Action<string, List<string>> save, Action<List<string>> ignore, Icon icon)
+        {
+            _config = config;
+            _save = save;
+            _ignore = ignore;
+            Text = "Monitor Dimmer - Spieleliste";
+            if (icon != null) Icon = icon;
+            StartPosition = FormStartPosition.Manual;
+            BackColor = CBack;
+            Font = new Font("Segoe UI", 9f);
+            using (var g = CreateGraphics()) k = g.DpiX / 96f;
+            ClientSize = new Size(S(1100), S(800));
+            MinimumSize = new Size(S(700), S(420));
+
+            // ---------- Kopf ----------
+            var head = new HeaderPanel("Spieleliste", "Programme, bei denen ein Profil automatisch aktiv wird", k);
+            _searchButton = new ModernButton("Neue / fehlende suchen...", '\uE721', false, k);
+            _searchButton.Click += (s, e) => SearchMissing();
+            head.SetRight(_searchButton);
+
+            // ---------- Karte mit Liste ----------
+            var body = new Panel { Dock = DockStyle.Fill, BackColor = CBack, Padding = new Padding(S(28), 0, S(28), 0) };
+            var card = new CardPanel(k) { Dock = DockStyle.Fill };
+            var cardHead = new Panel { Dock = DockStyle.Top, Height = S(52), BackColor = Ui.Card };
+            var title = new Label { Text = "Spiele", Font = new Font("Segoe UI Semibold", 11f), ForeColor = CText, AutoSize = true, Location = new Point(0, S(10)), BackColor = Color.Transparent };
+            _summary = new Label { ForeColor = CMuted, AutoSize = true, Font = new Font("Segoe UI", 10f), Location = new Point(S(80), S(12)), BackColor = Color.Transparent };
+            _profile = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = S(360), Font = new Font("Segoe UI", 9.5f), Anchor = AnchorStyles.Top | AnchorStyles.Right };
+            _profile.SelectedIndexChanged += (s, e) => FillList();
+            var lbl = new Label { Text = "Profil", ForeColor = CMuted, AutoSize = true, Font = new Font("Segoe UI", 10f), Anchor = AnchorStyles.Top | AnchorStyles.Right, BackColor = Color.Transparent };
+            cardHead.Controls.AddRange(new Control[] { title, _summary, lbl, _profile });
+            cardHead.Layout += (s, e) =>
+            {
+                _profile.Location = new Point(cardHead.Width - _profile.Width, S(8));
+                lbl.Location = new Point(_profile.Left - lbl.Width - S(10), S(12));
+                _summary.Left = title.Right + S(16);
+            };
+
+            _icons = new ImageList { ImageSize = new Size(S(16), S(16)), ColorDepth = ColorDepth.Depth32Bit };
+            _list = new BufferedListView
+            {
+                Dock = DockStyle.Fill,
+                View = View.Details,
+                FullRowSelect = true,
+                MultiSelect = true,
+                HideSelection = false,
+                BorderStyle = BorderStyle.None,
+                SmallImageList = _icons,
+                BackColor = Ui.Card,
+                Font = new Font("Segoe UI", 9.5f)
+            };
+            _list.Columns.Add("Spiel", S(230));
+            _list.Columns.Add("Programm", S(200));
+            _list.Columns.Add("Status", S(110));
+            _list.Columns.Add("Pfad", S(600));
+            _list.DoubleClick += (s, e) => OpenFolder();
+            _list.KeyDown += (s, e) => { if (e.KeyCode == Keys.Delete) RemoveSelected(); };
+            _list.SelectedIndexChanged += (s, e) => UpdateButtons();
+            card.Controls.Add(_list);
+            card.Controls.Add(cardHead);
+
+            // ---------- Knöpfe ----------
+            var actions = new Panel { Dock = DockStyle.Bottom, Height = S(72), BackColor = CBack };
+            var buttons = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false, BackColor = CBack, Padding = new Padding(0, S(16), 0, 0) };
+            var add = new ModernButton("Spiel hinzufügen", '\uE710', true, k);
+            add.Click += (s, e) => AddGame();
+            var remove = new ModernButton("Entfernen", '\uE74D', false, k) { Tag = "sel" };
+            remove.Click += (s, e) => RemoveSelected();
+            _moveButton = new ModernButton("In Profil verschieben  \u25BE", '\uE8DE', false, k) { Tag = "sel" };
+            _moveButton.Click += (s, e) => ShowMoveMenu();
+            var removeMissing = new ModernButton("Alle fehlenden entfernen", '\uE894', false, k);
+            removeMissing.Click += (s, e) => RemoveMissing();
+            var open = new ModernButton("Ordner öffnen", '\uE838', false, k) { Tag = "sel" };
+            open.Click += (s, e) => OpenFolder();
+            buttons.Controls.AddRange(new Control[] { add, remove, _moveButton, removeMissing, open });
+            var close = new ModernButton("Schließen", '\0', false, k) { Margin = new Padding(0) };
+            var right = new FlowLayoutPanel { Dock = DockStyle.Right, AutoSize = true, WrapContents = false, BackColor = CBack, Padding = new Padding(0, S(16), 0, 0) };
+            right.Controls.Add(close);
+            close.Click += (s, e) => Close();
+            actions.Controls.Add(buttons);
+            actions.Controls.Add(right);
+
+            // ---------- Hinweis ----------
+            var info = new InfoBanner("Die Liste wird alphabetisch sortiert und ohne Doppelte gespeichert. Vorher wird eine Sicherung angelegt (Einstellungen > Sicherungen öffnen).\n" +
+                "Doppelklick auf ein Spiel öffnet seinen Ordner, Entf entfernt die markierten Einträge.", k) { Dock = DockStyle.Bottom };
+
+            body.Controls.Add(card);
+            body.Controls.Add(actions);
+            body.Controls.Add(info);
+
+            Controls.Add(body);
+            Controls.Add(head);
+            Controls.Add(new SignatureFooter(k));
+            CancelButton = close;
+
+            Reload();
+            Resize += (s, e) => StretchPathColumn();
+            Load += (s, e) => FitWindowWidth();
+            Theme.Apply(this);
+        }
+
+        // ================================================================== Spaltenbreiten
+
+        private readonly int[] _contentWidth = new int[4];
+
+        /// <summary>Spaltenbreite = breitester Inhalt (mindestens Überschrift), ohne Flackern.</summary>
+        private void FitColumns()
+        {
+            if (_list.Columns.Count < 4) return;
+            var w = ListViewHelper.Fit(_list, S(12));
+            Array.Copy(w, _contentWidth, Math.Min(w.Length, _contentWidth.Length));
+        }
+
+        /// <summary>Die Spalte "Pfad" füllt den restlichen Platz (aber nie schmaler als ihr Inhalt).</summary>
+        private void StretchPathColumn()
+        {
+            ListViewHelper.Stretch(_list);
+        }
+
+        /// <summary>Fenster beim Öffnen so breit machen, dass alle Spalten passen (höchstens Bildschirmbreite).</summary>
+        private void FitWindowWidth()
+        {
+            int needed = _contentWidth.Sum() + SystemInformation.VerticalScrollBarWidth + S(4);
+            int extra = Width - _list.ClientSize.Width;   // Rahmen, Abstände, Liste-Rand
+            var area = Screen.FromPoint(Cursor.Position).WorkingArea;
+            Width = Math.Min(Math.Max(Width, needed + extra), area.Width - S(24));
+            WindowPlacement.Center(this);
+            StretchPathColumn();
+        }
+
+        private int S(float v) { return (int)Math.Round(v * k); }
+
+        protected override void OnFormClosed(FormClosedEventArgs e)
+        {
+            _instance = null;
+            base.OnFormClosed(e);
+        }
+
+        // ================================================================== Daten
+
+        private sealed class ProfileItem
+        {
+            public DimmingProfile Profile;
+            public override string ToString() { return Profile.Title + "   (" + Profile.Patterns.Count + ")"; }
+        }
+
+        private void Reload()
+        {
+            string selected = _profile.SelectedItem is ProfileItem ? ((ProfileItem)_profile.SelectedItem).Profile.Name : null;
+            _profile.Items.Clear();
+            foreach (var p in _config().Profiles.Where(x => x.IsAutomatic))
+                _profile.Items.Add(new ProfileItem { Profile = p });
+            if (_profile.Items.Count == 0) return;
+            int idx = 0;
+            for (int i = 0; i < _profile.Items.Count; i++)
+                if (((ProfileItem)_profile.Items[i]).Profile.Name == selected) idx = i;
+            _profile.SelectedIndex = idx;
+            FillList();
+        }
+
+        private DimmingProfile CurrentProfile
+        {
+            get
+            {
+                var it = _profile.SelectedItem as ProfileItem;
+                return it == null ? null : it.Profile;
+            }
+        }
+
+        private void FillList()
+        {
+            var p = CurrentProfile;
+            _list.BeginUpdate();
+            _list.Items.Clear();
+            if (p == null) { _list.EndUpdate(); return; }
+
+            int found = 0, missing = 0;
+            foreach (var pat in p.Patterns.OrderBy(x => GameName(x.Expanded), StringComparer.CurrentCultureIgnoreCase))
+            {
+                var e = new Entry { Raw = pat.Raw, State = Check(pat) };
+                if (e.State == EntryState.Found) found++;
+                if (e.State == EntryState.Missing) missing++;
+
+                string status;
+                Color color;
+                switch (e.State)
+                {
+                    case EntryState.Found: status = "✓ gefunden"; color = COk; break;
+                    case EntryState.Missing: status = "✗ fehlt"; color = CMissing; break;
+                    case EntryState.Wildcard: status = "Platzhalter"; color = CInfo; break;
+                    case EntryState.FileNameOnly: status = "jeder Ordner"; color = CInfo; break;
+                    default: status = "nicht prüfbar"; color = CMuted; break;
+                }
+                var item = new ListViewItem(GameName(pat.Expanded)) { Tag = e, UseItemStyleForSubItems = false };
+                item.SubItems.Add(Path.GetFileName(pat.Expanded));
+                var st = item.SubItems.Add(status);
+                st.ForeColor = color;
+                var pathSub = item.SubItems.Add(pat.Raw);
+                pathSub.ForeColor = CMuted;
+                if (e.State == EntryState.Missing) item.ForeColor = CMuted;
+                item.ImageKey = IconKey(pat.Expanded, e.State == EntryState.Found);
+                _list.Items.Add(item);
+            }
+            _list.EndUpdate();
+            FitColumns();
+            _summary.Text = string.Format("{0} Einträge   ·   {1} gefunden   ·   {2} fehlen", p.Patterns.Count, found, missing);
+            _summary.ForeColor = missing > 0 ? CMissing : CMuted;
+            UpdateButtons();
+        }
+
+        private void UpdateButtons()
+        {
+            bool sel = _list.SelectedItems.Count > 0;
+            foreach (Control c in _moveButton.Parent.Controls)
+                if ((c.Tag as string) == "sel") c.Enabled = sel;
+        }
+
+        private static EntryState Check(ProcessPattern p)
+        {
+            if (p.HasWildcards) return EntryState.Wildcard;
+            if (p.Expanded.IndexOf('\\') < 0) return EntryState.FileNameOnly;
+            if (p.Expanded.IndexOf("\\WindowsApps\\", StringComparison.OrdinalIgnoreCase) >= 0) return EntryState.NotCheckable;
+            if (Demo.Active) return EntryState.Found; // Beispieldaten für die Screenshots
+            try { return File.Exists(p.Expanded) ? EntryState.Found : EntryState.Missing; }
+            catch { return EntryState.NotCheckable; }
+        }
+
+        /// <summary>Spielname aus dem Ordner ableiten (technische Unterordner wie Win64, bin, x64 überspringen).</summary>
+        // Ordner, unter denen die Spiele liegen. Der Spielname ist der erste Ordner danach.
+        private static readonly string[] LibraryMarkers =
+        {
+            "\\steamapps\\common\\", "\\Spiele\\", "\\Games\\", "\\Epic Games\\", "\\GOG Galaxy\\Games\\",
+            "\\XboxGames\\", "\\Ubisoft Game Launcher\\games\\", "\\EA Games\\", "\\Origin Games\\",
+            "\\Program Files (x86)\\", "\\Program Files\\"
+        };
+
+        /// <summary>
+        /// Spielname = erster Ordner unter dem Spiele-Verzeichnis (C:\Spiele\..., steamapps\common\... usw.),
+        /// damit Unterordner wie SP, SYSTEM oder Binaries\Win64 keine Rolle spielen.
+        /// </summary>
+        internal static string GameName(string path)
+        {
+            try
+            {
+                // Microsoft Store: ...\WindowsApps\Microsoft.SunriseBaseGame_1.0_x64__xyz\Game.exe
+                int wa = path.IndexOf("\\WindowsApps\\", StringComparison.OrdinalIgnoreCase);
+                if (wa >= 0)
+                {
+                    string pkg = path.Substring(wa + 13).Split('\\')[0];
+                    int us = pkg.IndexOf('_');
+                    if (us > 0) pkg = pkg.Substring(0, us);
+                    int dot = pkg.LastIndexOf('.');
+                    if (dot >= 0 && dot < pkg.Length - 1) pkg = pkg.Substring(dot + 1);
+                    return pkg;
+                }
+
+                int best = -1, bestLen = 0;
+                foreach (var m in LibraryMarkers)
+                {
+                    int i = path.LastIndexOf(m, StringComparison.OrdinalIgnoreCase);
+                    if (i > best) { best = i; bestLen = m.Length; }
+                }
+                if (best >= 0)
+                {
+                    string rest = path.Substring(best + bestLen);
+                    int slash = rest.IndexOf('\\');
+                    if (slash > 0) return rest.Substring(0, slash);
+                }
+
+                // Sonst: nächster Ordner, der kein technischer Unterordner ist
+                string dir = Path.GetDirectoryName(path);
+                while (!string.IsNullOrEmpty(dir))
+                {
+                    string name = Path.GetFileName(dir);
+                    if (string.IsNullOrEmpty(name)) break;
+                    if (!GenericFolders.Contains(name)) return name;
+                    dir = Path.GetDirectoryName(dir);
+                }
+            }
+            catch { }
+            return Path.GetFileNameWithoutExtension(path);
+        }
+
+        private string IconKey(string path, bool exists)
+        {
+            string key = exists ? path.ToLowerInvariant() : "?";
+            if (_icons.Images.ContainsKey(key)) return key;
+            Image img = null;
+            if (exists)
+            {
+                try
+                {
+                    using (var ico = Icon.ExtractAssociatedIcon(path))
+                        if (ico != null) img = new Icon(ico, _icons.ImageSize).ToBitmap();
+                }
+                catch { }
+            }
+            if (img == null)
+            {
+                var bmp = new Bitmap(_icons.ImageSize.Width, _icons.ImageSize.Height);
+                using (var g = Graphics.FromImage(bmp))
+                {
+                    g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+                    using (var b = new SolidBrush(Color.FromArgb(219, 219, 219)))
+                        g.FillEllipse(b, 2, 2, bmp.Width - 4, bmp.Height - 4);
+                }
+                img = bmp;
+                key = "?";
+                if (_icons.Images.ContainsKey(key)) return key;
+            }
+            _icons.Images.Add(key, img);
+            return key;
+        }
+
+        // ================================================================== Aktionen
+
+        private List<string> CurrentPaths()
+        {
+            return CurrentProfile.Patterns.Select(x => x.Raw).ToList();
+        }
+
+        private List<string> SelectedPaths()
+        {
+            return _list.SelectedItems.Cast<ListViewItem>().Select(i => ((Entry)i.Tag).Raw).ToList();
+        }
+
+        private void Save(string profileName, List<string> paths)
+        {
+            try
+            {
+                _save(profileName, paths);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, "Speichern fehlgeschlagen:\r\n" + ex.Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+            Reload();
+        }
+
+        private void AddGame()
+        {
+            var p = CurrentProfile;
+            if (p == null) return;
+            using (var dlg = new OpenFileDialog
+            {
+                Title = "Spiel für \"" + p.Title + "\" auswählen",
+                Filter = "Programme (*.exe)|*.exe",
+                Multiselect = true,
+                InitialDirectory = Directory.Exists(@"C:\Spiele") ? @"C:\Spiele" : ""
+            })
+            {
+                if (dlg.ShowDialog(this) != DialogResult.OK) return;
+                var paths = CurrentPaths();
+                paths.AddRange(dlg.FileNames);
+                Save(p.Name, paths);
+                SelectPaths(dlg.FileNames);
+            }
+        }
+
+        private void RemoveSelected()
+        {
+            var p = CurrentProfile;
+            var sel = SelectedPaths();
+            if (p == null || sel.Count == 0) return;
+            string what = sel.Count == 1 ? "\"" + Path.GetFileName(sel[0]) + "\"" : sel.Count + " Einträge";
+            if (MessageBox.Show(this, what + " aus \"" + p.Title + "\" entfernen?", Text,
+                    MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
+            var set = new HashSet<string>(sel, StringComparer.OrdinalIgnoreCase);
+            Save(p.Name, CurrentPaths().Where(x => !set.Contains(x)).ToList());
+        }
+
+        private void SearchMissing()
+        {
+            var p = CurrentProfile;
+            if (p == null) return;
+            var missing = _list.Items.Cast<ListViewItem>().Select(i => (Entry)i.Tag).Where(x => x.State == EntryState.Missing).Select(x => x.Raw).ToList();
+            var cfg = _config();
+            var roots = GameScan.Roots(cfg, missing);
+            if (roots.Count == 0)
+            {
+                MessageBox.Show(this, "Der Ordner C:\\Spiele wurde nicht gefunden.", Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            string profileName = p.Name, profileTitle = p.Title;
+            _searchButton.Enabled = false;
+            _summary.ForeColor = CMuted;
+            _summary.Text = "Suche in " + string.Join(", ", roots) + " ...";
+            UseWaitCursor = true;
+            var ui = System.Threading.Tasks.TaskScheduler.FromCurrentSynchronizationContext();
+            System.Threading.Tasks.Task.Factory.StartNew(() => GameScan.Run(roots, cfg, missing, n =>
+                    BeginInvoke((Action)(() => _summary.Text = "Suche in " + string.Join(", ", roots) + " ...   " + n + " Ordner durchsucht"))))
+                .ContinueWith(t =>
+                {
+                    if (IsDisposed) return;
+                    UseWaitCursor = false;
+                    _searchButton.Enabled = true;
+                    FillList();
+                    if (t.Exception != null)
+                    {
+                        MessageBox.Show(this, "Suche fehlgeschlagen:\r\n" + t.Exception.GetBaseException().Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Error);
+                        return;
+                    }
+                    var results = t.Result;
+                    if (!results.Any(r => r.Candidates.Count > 0))
+                    {
+                        MessageBox.Show(this, "Keine neuen Spiele und keine fehlenden Programme gefunden.", Text, MessageBoxButtons.OK, MessageBoxIcon.Information);
+                        return;
+                    }
+                    using (var dlg = new GameScanDialog(results, roots, profileTitle, Icon))
+                    {
+                        if (dlg.ShowDialog(this) != DialogResult.OK) return;
+                        if (dlg.Ignore.Count > 0)
+                        {
+                            try { _ignore(dlg.Ignore); }
+                            catch (Exception ex) { MessageBox.Show(this, "Speichern fehlgeschlagen:\r\n" + ex.Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Error); }
+                        }
+                        if (dlg.Replacements.Count == 0 && dlg.Additions.Count == 0) { Reload(); return; }
+                        var target = _config().Find(profileName);
+                        if (target == null) return;
+                        var paths = target.Patterns.Select(x => x.Raw)
+                            .Select(x => dlg.Replacements.ContainsKey(x) ? dlg.Replacements[x] : x).ToList();
+                        paths.AddRange(dlg.Additions);
+                        Save(profileName, paths);
+                        SelectPaths(dlg.Replacements.Values.Concat(dlg.Additions));
+                    }
+                }, ui);
+        }
+
+        private void RemoveMissing()
+        {
+            var p = CurrentProfile;
+            if (p == null) return;
+            var missing = _list.Items.Cast<ListViewItem>().Select(i => (Entry)i.Tag).Where(e => e.State == EntryState.Missing).Select(e => e.Raw).ToList();
+            if (missing.Count == 0)
+            {
+                MessageBox.Show(this, "Alle Programme in diesem Profil sind vorhanden.", Text, MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            string preview = string.Join("\r\n", missing.Take(15).Select(x => "  " + x));
+            if (missing.Count > 15) preview += "\r\n  ... und " + (missing.Count - 15) + " weitere";
+            if (MessageBox.Show(this, missing.Count + " nicht gefundene Einträge aus \"" + p.Title + "\" entfernen?\r\n\r\n" + preview +
+                    "\r\n\r\nTipp: Liegt ein Spiel nur auf einem gerade nicht angeschlossenen Laufwerk, besser behalten.",
+                    Text, MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
+            var set = new HashSet<string>(missing, StringComparer.OrdinalIgnoreCase);
+            Save(p.Name, CurrentPaths().Where(x => !set.Contains(x)).ToList());
+        }
+
+        /// <summary>Menü "In Profil verschieben" im gleichen Stil wie Tray- und Kontextmenüs.</summary>
+        private void ShowMoveMenu()
+        {
+            var mb = new ModernMenuBuilder(this);
+            var menu = mb.CreateMenu();
+            menu.Closed += (s, e) => BeginInvoke(new Action(menu.Dispose));
+            var cur = CurrentProfile;
+            foreach (var p in _config().Profiles.Where(x => x.IsAutomatic && cur != null && x.Name != cur.Name))
+            {
+                var target = p;
+                menu.Items.Add(mb.Item(target.Title, '\0', () => MoveSelected(target)));
+            }
+            if (menu.Items.Count == 0) menu.Items.Add(mb.Info("Kein anderes Profil"));
+            menu.Show(_moveButton, new Point(0, _moveButton.Height));
+        }
+
+        private void MoveSelected(DimmingProfile target)
+        {
+            var src = CurrentProfile;
+            var sel = SelectedPaths();
+            if (src == null || sel.Count == 0) return;
+            var set = new HashSet<string>(sel, StringComparer.OrdinalIgnoreCase);
+            var targetPaths = target.Patterns.Select(x => x.Raw).ToList();
+            targetPaths.AddRange(sel);
+            try
+            {
+                _save(target.Name, targetPaths);
+                _save(src.Name, CurrentPaths().Where(x => !set.Contains(x)).ToList());
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, "Verschieben fehlgeschlagen:\r\n" + ex.Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+            Reload();
+        }
+
+        private void SelectPaths(IEnumerable<string> paths)
+        {
+            var set = new HashSet<string>(paths, StringComparer.OrdinalIgnoreCase);
+            foreach (ListViewItem i in _list.Items)
+            {
+                if (set.Contains(((Entry)i.Tag).Raw))
+                {
+                    i.Selected = true;
+                    i.EnsureVisible();
+                }
+            }
+            _list.Focus();
+        }
+
+        private void OpenFolder()
+        {
+            var sel = SelectedPaths();
+            if (sel.Count == 0) return;
+            string path = Environment.ExpandEnvironmentVariables(sel[0]);
+            try
+            {
+                if (File.Exists(path)) Process.Start("explorer.exe", "/select,\"" + path + "\"");
+                else
+                {
+                    string dir = Path.GetDirectoryName(path);
+                    while (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir)) dir = Path.GetDirectoryName(dir);
+                    if (!string.IsNullOrEmpty(dir)) Process.Start("explorer.exe", "\"" + dir + "\"");
+                }
+            }
+            catch { }
+        }
+    }
+}
