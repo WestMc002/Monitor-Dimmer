@@ -8,6 +8,7 @@ using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Text;
 using System.IO;
+using System.Linq;
 using System.Windows.Forms;
 
 namespace MonitorDimmer
@@ -36,6 +37,7 @@ namespace MonitorDimmer
                 return Theme.Dark ? p[1] : p[5];
             }
         }
+        public static Color NavSelected { get { return Theme.Map(Color.FromArgb(234, 234, 234)); } }
         public static Color Hover { get { return Theme.Map(Color.FromArgb(246, 246, 246)); } }
         public static Color Down { get { return Theme.Map(Color.FromArgb(236, 236, 236)); } }
         public static Color Disabled { get { return Theme.Map(Color.FromArgb(157, 157, 157)); } }
@@ -56,6 +58,9 @@ namespace MonitorDimmer
             }
         }
         public static Color PillText { get { return AccentText; } }
+        // Windows-11-Statusfarben (Erfolg, Fehler) für hell und dunkel
+        public static Color Green { get { return Theme.Dark ? Color.FromArgb(108, 203, 95) : Color.FromArgb(15, 123, 15); } }
+        public static Color Red { get { return Theme.Dark ? Color.FromArgb(255, 153, 164) : Color.FromArgb(196, 43, 28); } }
 
         public static float Scale(Control c)
         {
@@ -121,34 +126,41 @@ namespace MonitorDimmer
             g.Clear(Ui.Back);
             g.SmoothingMode = SmoothingMode.AntiAlias;
             g.TextRenderingHint = TextRenderingHint.ClearTypeGridFit;
-            float x = 28 * k, y = 24 * k, icon = 52 * k;
-            if (_icon != null) g.DrawImage(_icon, x, y + 4 * k, icon, icon);
-            float tx = x + icon + 18 * k;
-            using (var fTitle = new Font("Segoe UI Semibold", 17f))
-            using (var bText = new SolidBrush(Ui.Text))
+            // Einheitlicher Kopf (globale Vorgabe, Referenz Wake on LAN): Icon links, daneben Name und Untertitel als Block
+            // mittig zum Icon; Name mit denselben Flags gemessen und gezeichnet (NoPadding), damit der Abstand zur Plakette stimmt
+            int x = (int)(28 * k), iconTop = (int)(28 * k), icon = (int)(52 * k);
+            if (_icon != null)
             {
-                g.DrawString(Title, fTitle, bText, tx - 3 * k, y - 2 * k);
-                float tw = g.MeasureString(Title, fTitle).Width;
-                // Versions-Plakette
-                using (var fPill = new Font("Segoe UI", 9f))
-                {
-                    string v = "Version " + Ui.Version;
-                    var sz = g.MeasureString(v, fPill);
-                    var r = new RectangleF(tx + tw + 6 * k, y + 6 * k, sz.Width + 16 * k, sz.Height + 6 * k);
-                    _pill = r;
-                    using (var p = MonitorForm.Rounded(r, r.Height / 2))
-                    {
-                        using (var b = new SolidBrush(_pillHover ? Ui.InfoBorder : Ui.InfoBack)) g.FillPath(b, p);
-                        using (var pen = new Pen(Ui.InfoBorder)) g.DrawPath(pen, p);
-                    }
-                    using (var b = new SolidBrush(Ui.PillText))
-                        g.DrawString(v, fPill, b, r.X + 8 * k, r.Y + 3 * k);
-                }
+                g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                g.DrawImage(_icon, x, iconTop, icon, icon);
             }
-            if (!string.IsNullOrEmpty(Subtitle))
-                using (var f = new Font("Segoe UI", 10f))
-                using (var b = new SolidBrush(Ui.Muted))
-                    g.DrawString(Subtitle, f, b, tx - 1 * k, y + 38 * k);
+            int tx = x + icon + (int)(18 * k);
+            var flags = TextFormatFlags.NoPadding | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix;
+            using (var fTitle = new Font("Segoe UI Semibold", 17f))
+            using (var fSub = new Font("Segoe UI", 10f))
+            using (var fPill = new Font("Segoe UI", 10.5f * k, GraphicsUnit.Pixel))
+            {
+                var ts = TextRenderer.MeasureText(g, Title, fTitle, Size.Empty, flags);
+                var ss = string.IsNullOrEmpty(Subtitle) ? Size.Empty : TextRenderer.MeasureText(g, Subtitle, fSub, Size.Empty, flags);
+                int gap = ss.Height > 0 ? (int)(4 * k) : 0;
+                int top = iconTop + (icon - ts.Height - gap - ss.Height) / 2;
+                TextRenderer.DrawText(g, Title, fTitle, new Point(tx, top), Ui.Text, flags);
+                if (ss.Height > 0) TextRenderer.DrawText(g, Subtitle, fSub, new Point(tx + (int)(1 * k), top + ts.Height + gap), Ui.Muted, flags);
+
+                // Versions-Plakette: 12 neben dem Namen, Höhe 21, Schrift 10,5 px, Innenabstand je 8,
+                // senkrecht mittig zum Namen, Text mittig; Klick öffnet das Info-Fenster
+                string v = "Version " + Ui.Version;
+                var vs = TextRenderer.MeasureText(g, v, fPill, Size.Empty, flags);
+                int ph = (int)Math.Round(21 * k), pw = vs.Width + (int)Math.Round(16 * k);
+                var r = new Rectangle(tx + ts.Width + (int)Math.Round(12 * k), top + (ts.Height - ph) / 2, pw, ph);
+                _pill = r;
+                using (var p = MonitorForm.Rounded(new RectangleF(r.X + 0.5f, r.Y + 0.5f, r.Width - 1, r.Height - 1), (r.Height - 1) / 2f))
+                {
+                    using (var b = new SolidBrush(_pillHover ? Ui.InfoBorder : Ui.InfoBack)) g.FillPath(b, p);
+                    using (var pen = new Pen(Ui.InfoBorder)) g.DrawPath(pen, p);
+                }
+                TextRenderer.DrawText(g, v, fPill, r, Ui.PillText, flags | TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+            }
         }
 
         protected override void OnMouseMove(MouseEventArgs e)
@@ -166,7 +178,7 @@ namespace MonitorDimmer
 
         protected override void OnMouseClick(MouseEventArgs e)
         {
-            if (e.Button == MouseButtons.Left && _pill.Contains(e.Location)) AboutDialog.ShowFor(FindForm());
+            if (e.Button == MouseButtons.Left && _pill.Contains(e.Location)) { if (!MainWindow.ShowInfoFrom(this)) AboutDialog.ShowFor(FindForm()); }
             base.OnMouseClick(e);
         }
     }
@@ -243,6 +255,8 @@ namespace MonitorDimmer
         private bool _hover, _down;
         public bool Primary;
         public char Glyph;
+        /// <summary>Feste Höhe in Einheiten (Standard 40, kleine Knöpfe 30).</summary>
+        public int HeightUnits = 40;
 
         public ModernButton(string text, char glyph, bool primary, float scale)
         {
@@ -264,7 +278,7 @@ namespace MonitorDimmer
         {
             int tw = TextRenderer.MeasureText(Text, Font).Width;
             int icon = Glyph == '\0' ? 0 : (int)((string.IsNullOrEmpty(Text) ? 16 : 26) * k);
-            Size = new Size(tw + icon + (int)(36 * k), (int)(40 * k));
+            Size = new Size(tw + icon + (int)(36 * k), (int)(HeightUnits * k));
         }
 
         protected override void OnTextChanged(EventArgs e)
@@ -435,10 +449,181 @@ namespace MonitorDimmer
     }
 
     /// <summary>"Info über Monitor Dimmer": großes GS-Logo, Version, Eckdaten, Anleitung/Sicherungen.</summary>
+    /// <summary>Schalter wie in den Windows-11-Einstellungen (Referenz Wake on LAN).</summary>
+    internal sealed class ModernCheck : Control
+    {
+        private readonly float k;
+        private bool _checked, _hover;
+        public event EventHandler CheckedChanged;
+
+        public ModernCheck(string text, float scale)
+        {
+            k = scale;
+            Text = text;
+            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint
+                | ControlStyles.ResizeRedraw | ControlStyles.Selectable | ControlStyles.SupportsTransparentBackColor, true);
+            Font = new Font("Segoe UI", 9.5f);
+            Cursor = Cursors.Hand;
+            TabStop = true;
+            UpdateSize();
+        }
+
+        public bool Checked
+        {
+            get { return _checked; }
+            set
+            {
+                if (_checked == value) return;
+                _checked = value;
+                Invalidate();
+                if (CheckedChanged != null) CheckedChanged(this, EventArgs.Empty);
+            }
+        }
+
+        private void UpdateSize()
+        {
+            int tw = TextRenderer.MeasureText(Text, Font).Width;
+            Size = new Size(tw + (int)(60 * k), (int)(32 * k));
+        }
+
+        protected override void OnTextChanged(EventArgs e) { base.OnTextChanged(e); if (k > 0) UpdateSize(); }
+        protected override void OnMouseEnter(EventArgs e) { _hover = true; Invalidate(); base.OnMouseEnter(e); }
+        protected override void OnMouseLeave(EventArgs e) { _hover = false; Invalidate(); base.OnMouseLeave(e); }
+        protected override void OnGotFocus(EventArgs e) { Invalidate(); base.OnGotFocus(e); }
+        protected override void OnLostFocus(EventArgs e) { Invalidate(); base.OnLostFocus(e); }
+
+        protected override void OnMouseClick(MouseEventArgs e)
+        {
+            if (e.Button == MouseButtons.Left) { Focus(); Checked = !Checked; }
+            base.OnMouseClick(e);
+        }
+
+        protected override void OnKeyDown(KeyEventArgs e)
+        {
+            if (e.KeyCode == Keys.Space) { Checked = !Checked; e.Handled = true; }
+            base.OnKeyDown(e);
+        }
+
+        /// <summary>Schalter wie in den Windows-11-Einstellungen (und in Sync Pilot): Text links, Schalter rechts.</summary>
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            var g = e.Graphics;
+            g.Clear(Parent != null ? Parent.BackColor : Ui.Card);
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            float tw = 40 * k, th = 20 * k;
+            var track = new RectangleF(Width - tw - 2 * k, (Height - th) / 2f, tw, th);
+            using (var p = MonitorForm.Rounded(track, th / 2f))
+            {
+                if (_checked)
+                {
+                    using (var b = new SolidBrush(!Enabled ? Ui.Disabled : _hover ? Ui.PrimaryHover : Ui.Primary)) g.FillPath(b, p);
+                }
+                else
+                {
+                    using (var b = new SolidBrush(_hover && Enabled ? Ui.Hover : Ui.Card)) g.FillPath(b, p);
+                    using (var pen = new Pen(Enabled ? Ui.Muted : Ui.Disabled, 1f * k)) g.DrawPath(pen, p);
+                }
+            }
+            float d = (_hover && Enabled ? 14 : 12) * k;
+            float kx = _checked ? track.Right - 4 * k - d : track.X + 4 * k, ky = track.Y + (th - d) / 2f;
+            using (var b = new SolidBrush(_checked ? (Enabled ? Ui.PrimaryText : Ui.Card) : (Enabled ? Ui.Muted : Ui.Disabled)))
+                g.FillEllipse(b, kx, ky, d, d);
+            if (Focused && ShowKeyboardCues)
+                using (var pen = new Pen(Ui.Text, 1f) { DashStyle = DashStyle.Dot })
+                    g.DrawRectangle(pen, 0, 0, Width - 1, Height - 1);
+            TextRenderer.DrawText(g, Text, Font, new Rectangle((int)(2 * k), 0, (int)(track.X - 12 * k), Height), Enabled ? Ui.Text : Ui.Disabled,
+                TextFormatFlags.VerticalCenter | TextFormatFlags.Left | TextFormatFlags.NoPadding | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis);
+        }
+    }
+
+    /// <summary>Eintrag der Navigation links (Referenz Wake on LAN).</summary>
+    internal sealed class NavButton : Button
+    {
+        private readonly float k;
+        private bool _hover, _down, _selected;
+        public char Glyph;
+        /// <summary>Nur Symbol, kleiner und ohne Auswahl-Markierung (Stecknadel).</summary>
+        public bool IconOnly;
+
+        public NavButton(string text, char glyph, float scale)
+        {
+            k = scale;
+            Text = text;
+            Glyph = glyph;
+            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
+            FlatStyle = FlatStyle.Flat;
+            FlatAppearance.BorderSize = 0;
+            Font = new Font("Segoe UI", 9.5f);
+            Cursor = Cursors.Hand;
+            Height = (int)(40 * k);
+            if (text.Length > 0) AccessibleName = text;
+        }
+
+        public bool Selected
+        {
+            get { return _selected; }
+            set { if (_selected != value) { _selected = value; Invalidate(); } }
+        }
+
+        protected override bool ShowFocusCues { get { return false; } }
+
+        protected override void OnMouseEnter(EventArgs e) { _hover = true; Invalidate(); base.OnMouseEnter(e); }
+        protected override void OnMouseLeave(EventArgs e) { _hover = false; _down = false; Invalidate(); base.OnMouseLeave(e); }
+        protected override void OnMouseDown(MouseEventArgs e) { if (e.Button == MouseButtons.Left) { _down = true; Invalidate(); } base.OnMouseDown(e); }
+        protected override void OnMouseUp(MouseEventArgs e) { _down = false; Invalidate(); base.OnMouseUp(e); }
+        protected override void OnEnabledChanged(EventArgs e) { Invalidate(); base.OnEnabledChanged(e); }
+        protected override void OnTextChanged(EventArgs e) { base.OnTextChanged(e); Invalidate(); }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            var g = e.Graphics;
+            Color back = Parent != null ? Parent.BackColor : Ui.Back;
+            g.Clear(back);
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            Color fill = _selected && !IconOnly ? Ui.NavSelected : _down ? Ui.Down : _hover ? Ui.Hover : back;
+            Color text = Enabled ? Ui.Text : Ui.Disabled;
+            if (fill != back)
+                using (var p = MonitorForm.Rounded(new RectangleF(0.5f, 0.5f, Width - 1.5f, Height - 1.5f), 5 * k))
+                using (var b = new SolidBrush(fill)) g.FillPath(b, p);
+
+            // Symbolgrößen wie bei Sync Pilot und Wake on LAN: Einträge und ☰ 14 pt, Stecknadel 12 pt
+            int gs = (int)Math.Round((IconOnly ? 12f : 14f) * 96f / 72f * k);
+            if (IconOnly)
+            {
+                DrawGlyph(g, (Width - gs) / 2, gs, text);
+                return;
+            }
+            if (_selected)
+                using (var p = MonitorForm.Rounded(new RectangleF(0, Height / 2f - 8 * k, 3 * k, 16 * k), 1.5f * k))
+                using (var b = new SolidBrush(Ui.Primary)) g.FillPath(b, p);
+            int x = (int)(14 * k);
+            if (Glyph != '\0')
+            {
+                DrawGlyph(g, x + ((int)(20 * k) - gs) / 2, gs, text);
+                x += (int)(32 * k);
+            }
+            // eingeklappt: nur das Symbol
+            if (Text.Length > 0 && Width - x - (int)(8 * k) > (int)(20 * k))
+                using (var f = _selected ? new Font("Segoe UI Semibold", 9.5f) : null)
+                    TextRenderer.DrawText(g, Text, f ?? Font, new Rectangle(x, 0, Width - x - (int)(8 * k), Height), text,
+                        TextFormatFlags.VerticalCenter | TextFormatFlags.Left | TextFormatFlags.NoPadding | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis);
+        }
+
+        private void DrawGlyph(Graphics g, int x, int gs, Color color)
+        {
+            var img = MenuHelper.Glyph(Glyph, color, gs);
+            if (img == null) return;
+            g.DrawImage(img, x, (Height - gs) / 2, gs, gs);
+            img.Dispose();
+        }
+    }
+
     internal sealed class AboutDialog : Form
     {
         private static AboutDialog _open;
         private readonly float k;
+        /// <summary>Bereich „Updates“ (vom Tray-Programm gesetzt; in den Screenshots nicht vorhanden).</summary>
+        public static UpdateHooks Updates;
 
         public static void ShowFor(Form owner)
         {
@@ -465,7 +650,7 @@ namespace MonitorDimmer
             BackColor = Ui.Back;
             Font = new Font("Segoe UI", 9.5f);
             using (var g = CreateGraphics()) k = g.DpiX / 96f;
-            int W = S(480);
+            int W = S(540);
 
             int y = S(24);
             var logo = new PictureBox
@@ -502,7 +687,17 @@ namespace MonitorDimmer
             y += S(40);
 
             // ---------- Karte mit Eckdaten ----------
-            var card = new CardPanel(k) { Location = new Point(S(24), y), Size = new Size(W - S(48), S(140)) };
+            // Screenshots: keine Prüfung, Stand fest "Aktuell" (globale Vorgabe)
+            string today = "Zuletzt geprüft " + DateTime.Now.ToString("dd.MM.yyyy");
+            var updates = Demo.Active ? new UpdateHooks
+            {
+                Status = () => new UpdateStatus(UpdateKind.Current, "Aktuell", today),
+                Auto = () => true,
+                SetAuto = on => { },
+                CheckNow = () => System.Threading.Tasks.Task.FromResult(new UpdateStatus(UpdateKind.Current, "Aktuell", today)),
+                CanInstall = () => false
+            } : Updates;
+            var card = new CardPanel(k) { Location = new Point(S(24), y), Size = new Size(W - S(48), S(140) + (updates != null ? S(60) + S(32) : 0)) };
             var table = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, BackColor = Ui.Card };
             table.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, S(118)));
             table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
@@ -514,6 +709,7 @@ namespace MonitorDimmer
             AddRow(table, tip, "Erstellt", built);
             AddRow(table, tip, "Farbschema", (Theme.Dark ? "dunkel" : "hell") + " (folgt Windows)");
             AddRow(table, tip, "Programm", Demo.Active ? @"C:\Tools\Monitor Dimmer" : Application.StartupPath); // Screenshots: kein privater Pfad
+            if (updates != null) AddUpdateRows(table, updates);
             card.Controls.Add(table);
             Controls.Add(card);
             y += card.Height + S(24);
@@ -569,6 +765,120 @@ namespace MonitorDimmer
                 int hit = m.Result.ToInt32();
                 if (hit >= 10 && hit <= 17) m.Result = (IntPtr)1; // HTCLIENT: keine Größenänderung (wie in allen Programmen)
             }
+        }
+
+        /// <summary>
+        /// Updates (wie Fensterpositionen): Symbol und Stand (zweite Zeile: letzte Prüfung), rechts ein kleiner Knopf
+        /// ("Jetzt prüfen", bei neuer Version "Aktualisieren"), darunter der Schalter für die automatische Prüfung.
+        /// </summary>
+        private void AddUpdateRows(TableLayoutPanel t, UpdateHooks updates)
+        {
+            int row = t.RowCount;
+            t.RowCount = row + 2;
+            t.RowStyles.Add(new RowStyle(SizeType.Absolute, S(60))); // etwas Luft über dem Knopf und unter der zweiten Zeile
+            t.RowStyles.Add(new RowStyle(SizeType.Absolute, S(32)));
+            t.Controls.Add(new Label
+            {
+                Text = "Updates",
+                ForeColor = Ui.Muted,
+                BackColor = Ui.Card,
+                AutoSize = false,
+                Size = new Size(S(110), S(22)),
+                Anchor = AnchorStyles.Top | AnchorStyles.Left,
+                Margin = new Padding(3, S(9), 3, 0),
+                TextAlign = ContentAlignment.MiddleLeft
+            }, 0, row);
+
+            var cell = new Panel { Dock = DockStyle.Fill, BackColor = Ui.Card, Margin = new Padding(3, 0, 3, 0) };
+            var glyph = new StatusGlyph(k) { BackColor = Ui.Card, Size = new Size(S(20), S(22)), Location = new Point(0, S(9)) };
+            var title = new Label { ForeColor = Ui.Text, BackColor = Ui.Card, AutoSize = false, AutoEllipsis = true, UseMnemonic = false, TextAlign = ContentAlignment.MiddleLeft };
+            var detail = new Label { ForeColor = Ui.Muted, BackColor = Ui.Card, AutoSize = false, AutoEllipsis = true, UseMnemonic = false, TextAlign = ContentAlignment.TopLeft, Font = new Font("Segoe UI", 8.75f) };
+            var check = new ModernButton("Jetzt prüfen", MenuHelper.Refresh, false, k) { Margin = Padding.Empty };
+            var install = new ModernButton("Aktualisieren", MenuHelper.Download, true, k) { Margin = Padding.Empty };
+            var page = new ModernButton("Release-Seite", MenuHelper.Link, false, k) { Margin = Padding.Empty };
+            var tip = new ToolTip();
+            tip.SetToolTip(install, "Programm beenden, auf die neue Version aktualisieren und neu starten");
+            foreach (var b in new[] { check, install, page })
+            {
+                b.HeightUnits = 30;
+                b.UpdateSize();
+                cell.Controls.Add(b);
+            }
+            cell.Controls.Add(glyph);
+            cell.Controls.Add(title);
+            cell.Controls.Add(detail);
+
+            Action layout = () =>
+            {
+                // Knopf rechtsbündig mit dem Schalter darunter (dessen Spur endet 2 px vor dem Rand) und auf Höhe
+                // der ersten Zeile – so hat die zweite Zeile (letzte Prüfung) die volle Breite
+                int right = cell.Width - S(2);
+                foreach (var b in new[] { check, install, page }) b.Location = new Point(right - b.Width, S(20) - b.Height / 2);
+                var shown = install.Visible ? install : page.Visible ? page : check;
+                int tx = S(28), tw = Math.Max(S(40), shown.Left - S(12) - tx);
+                title.SetBounds(tx, S(9), tw, S(22));
+                detail.SetBounds(tx, S(33), Math.Max(S(40), cell.Width - tx), S(20));
+            };
+            cell.Resize += (s, e) => layout();
+
+            Action<UpdateStatus> show = st =>
+            {
+                switch (st.Kind)
+                {
+                    case UpdateKind.Current: glyph.Set(MenuHelper.Completed, Ui.Green); break;
+                    case UpdateKind.Available: glyph.Set(MenuHelper.Download, Ui.AccentText); break;
+                    case UpdateKind.Failed: glyph.Set(MenuHelper.Warning, Ui.Red); break;
+                    case UpdateKind.Checking: glyph.Set(MenuHelper.Sync, Ui.Muted); break;
+                    default: glyph.Set(MenuHelper.Info, Ui.Muted); break;
+                }
+                title.Text = st.Title;
+                title.ForeColor = st.Kind == UpdateKind.Available ? Ui.AccentText : st.Kind == UpdateKind.Checking ? Ui.Muted : Ui.Text;
+                detail.Text = st.Detail;
+                tip.SetToolTip(detail, st.Detail);
+                bool available = st.Kind == UpdateKind.Available;
+                bool canInstall = available && updates.CanInstall != null && updates.CanInstall();
+                install.Visible = canInstall;
+                page.Visible = available && !canInstall;
+                check.Visible = !available;
+                check.Enabled = st.Kind != UpdateKind.Checking;
+                layout();
+            };
+
+            check.Click += async (s, e) =>
+            {
+                show(new UpdateStatus(UpdateKind.Checking, "Prüfe auf GitHub …", ""));
+                UpdateStatus st;
+                try { st = await updates.CheckNow(); }
+                catch (Exception ex) { st = new UpdateStatus(UpdateKind.Failed, "Prüfung nicht möglich", ex.Message); }
+                if (!IsDisposed) show(st);
+            };
+            install.Click += (s, e) =>
+            {
+                Close();
+                if (updates.Install != null) updates.Install();
+            };
+            page.Click += (s, e) => { if (updates.OpenPage != null) updates.OpenPage(); };
+            show(updates.Status());
+            t.Controls.Add(cell, 1, row);
+
+            // Automatisch prüfen: Text bündig mit den Werten darüber, Schalter rechts
+            var autoCell = new Panel { Dock = DockStyle.Fill, BackColor = Ui.Card, Margin = new Padding(3, 0, 3, 0) };
+            var auto = new ModernCheck("", k) { Checked = updates.Auto(), BackColor = Ui.Card, Dock = DockStyle.Right, Width = S(46) };
+            var autoText = new Label
+            {
+                Text = "Automatisch prüfen",
+                ForeColor = Ui.Text,
+                BackColor = Ui.Card,
+                Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.MiddleLeft,
+                AutoEllipsis = true,
+                Cursor = Cursors.Hand
+            };
+            autoText.Click += (s, e) => auto.Checked = !auto.Checked;
+            auto.CheckedChanged += (s, e) => updates.SetAuto(auto.Checked);
+            autoCell.Controls.Add(autoText);
+            autoCell.Controls.Add(auto);
+            t.Controls.Add(autoCell, 1, row + 1);
         }
 
         private void AddRow(TableLayoutPanel t, ToolTip tip, string name, string value)

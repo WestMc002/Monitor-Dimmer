@@ -41,11 +41,18 @@ namespace MonitorDimmer
             foreach (var a in args)
             {
                 if (a.StartsWith("/config:", StringComparison.OrdinalIgnoreCase)) configName = a.Substring(8);
+                if (string.Equals(a, "--nach-update", StringComparison.OrdinalIgnoreCase)) TrayApp.AfterUpdate = true;
             }
 
             bool created;
             using (var mutex = new Mutex(true, "Local\\MonitorDimmer_" + configName, out created))
             {
+                if (!created && TrayApp.AfterUpdate)
+                {
+                    // Neustart nach dem Update: warten, bis die alte Version ihren Mutex freigegeben hat
+                    try { created = mutex.WaitOne(30000); }
+                    catch (AbandonedMutexException) { created = true; }
+                }
                 if (!created)
                 {
                     MessageBox.Show("Der Monitor Dimmer läuft bereits (Symbol im Infobereich der Taskleiste).",

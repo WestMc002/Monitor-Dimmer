@@ -120,6 +120,7 @@ namespace MonitorDimmer
         private readonly Func<string, string> _status;
         private readonly ModernButton _edit, _remove, _up, _down;
         private readonly Label _count;
+        private readonly Label _error;
         private int _sortColumn = -1;
         private bool _sortDescending;
         private float k = 1f;
@@ -197,10 +198,14 @@ namespace MonitorDimmer
             var cancel = new ModernButton("Abbrechen", '\0', false, k) { DialogResult = DialogResult.Cancel, Margin = new Padding(0) };
             var save = new ModernButton("Speichern", '\uE74E', true, k);
             save.Click += (s, e) => { if (Validate()) { DialogResult = DialogResult.OK; Close(); } };
+            // links neben den Knöpfen: rote Fehlerzeile, das Fenster bleibt dann offen
+            _error = new Label { AutoSize = true, ForeColor = Theme.Map(Color.FromArgb(196, 43, 28)), BackColor = CBack, MinimumSize = new Size(0, save.Height), TextAlign = ContentAlignment.MiddleRight, Margin = new Padding(0, 0, S(12), 0) };
             right.Controls.Add(cancel);
             right.Controls.Add(save);
+            right.Controls.Add(_error);
             actions.Controls.Add(left);
             actions.Controls.Add(right);
+            ButtonRow.Fit(actions, left, right); // schmal: Knöpfe links nur mit Symbol, nichts liegt unter "Speichern"
 
             var info = new InfoBanner("Solange dieses Fenster offen ist, sind die Tastenkürzel abgeschaltet.\n" +
                 "Klick auf eine Spaltenüberschrift sortiert, die Pfeile verschieben den markierten Eintrag.", k) { Dock = DockStyle.Bottom };
@@ -213,6 +218,7 @@ namespace MonitorDimmer
             Controls.Add(head);
             Controls.Add(new SignatureFooter(k));
             CancelButton = cancel;
+            AcceptButton = save;
             FillList();
             Load += (s, e) => WindowPlacement.Center(this);
             Theme.Apply(this);
@@ -374,11 +380,10 @@ namespace MonitorDimmer
             var dupes = _items.GroupBy(h => HotkeyActions.Normalize(h.Keys)).Where(g => g.Count() > 1).ToList();
             if (dupes.Count > 0)
             {
-                MessageBox.Show(this, "Diese Tastenkürzel sind mehrfach vergeben:\r\n\r\n" +
-                    string.Join("\r\n", dupes.Select(g => "  " + HotkeyActions.Display(g.First().Keys))),
-                    Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                _error.Text = "Mehrfach vergeben: " + string.Join(", ", dupes.Select(g => HotkeyActions.Display(g.First().Keys)));
                 return false;
             }
+            _error.Text = "";
             return true;
         }
     }

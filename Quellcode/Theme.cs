@@ -123,12 +123,10 @@ namespace MonitorDimmer
         {
             ComboStyle.ApplyAll(form); // in hell und dunkel: Text in Auswahllisten mit Abstand zum Rand
             if (!Dark) return;
-            WhenHandle(form, h =>
-            {
-                int on = 1;
-                if (DwmSetWindowAttribute(h, 20, ref on, sizeof(int)) != 0)
-                    DwmSetWindowAttribute(h, 19, ref on, sizeof(int)); // ältere Windows-10-Versionen
-            });
+            // Dunkle Titelleiste sofort und bei jedem neuen Fenster-Handle setzen (Windows legt Handles z. B. bei
+            // ShowInTaskbar- oder Rahmenänderungen neu an, die Einstellung ginge sonst verloren)
+            if (form.IsHandleCreated) DarkTitleBar(form.Handle);
+            form.HandleCreated += (s, e) => { if (Dark) DarkTitleBar(form.Handle); };
             ApplyTo(form);
         }
 
@@ -164,6 +162,8 @@ namespace MonitorDimmer
                 list.ForeColor = Map(Color.FromArgb(27, 27, 27));
                 WhenHandle(list, h =>
                 {
+                    // dunkle Bildlaufleisten; die Spaltenlinien, die dieses Thema unter die Einträge zeichnet,
+                    // übermalt BufferedListView (WM_PAINT)
                     SetWindowTheme(h, "DarkMode_Explorer", null);
                     IntPtr header = SendMessage(h, 0x101F /* LVM_GETHEADER */, IntPtr.Zero, IntPtr.Zero);
                     if (header != IntPtr.Zero) SetWindowTheme(header, "DarkMode_ItemsView", null);
@@ -210,6 +210,13 @@ namespace MonitorDimmer
             if (!s.ForeColor.IsEmpty) s.ForeColor = Map(s.ForeColor);
             if (!s.SelectionBackColor.IsEmpty) s.SelectionBackColor = Map(s.SelectionBackColor);
             if (!s.SelectionForeColor.IsEmpty) s.SelectionForeColor = Map(s.SelectionForeColor);
+        }
+
+        private static void DarkTitleBar(IntPtr h)
+        {
+            int on = 1;
+            if (DwmSetWindowAttribute(h, 20, ref on, sizeof(int)) != 0)
+                DwmSetWindowAttribute(h, 19, ref on, sizeof(int)); // ältere Windows-10-Versionen
         }
 
         private static void WhenHandle(Control c, Action<IntPtr> action)

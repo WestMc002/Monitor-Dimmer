@@ -47,6 +47,10 @@ namespace MonitorDimmer
         private readonly ImageList _icons;
         private readonly ModernButton _moveButton;
         private readonly ModernButton _searchButton;
+        private readonly Label _error;
+        // Änderungen werden gesammelt und erst mit "Speichern" übernommen (globale Vorgabe Einstellungsseiten)
+        private readonly Dictionary<string, List<string>> _pending = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+        private readonly List<string> _pendingIgnore = new List<string>();
         private float k = 1f;
 
         private enum EntryState { Found, Missing, Wildcard, FileNameOnly, NotCheckable }
@@ -85,6 +89,8 @@ namespace MonitorDimmer
         internal GameListForm(Func<AppConfig> config, Action<string, List<string>> save, Action<List<string>> ignore, Icon icon)
         {
             _config = config;
+            _instance = this; // RefreshIfOpen: auch als Seite im Hauptfenster
+            FormClosed += (s, e) => { if (_instance == this) _instance = null; };
             _save = save;
             _ignore = ignore;
             Text = "Monitor Dimmer - Spieleliste";
@@ -125,6 +131,7 @@ namespace MonitorDimmer
                 Dock = DockStyle.Fill,
                 View = View.Details,
                 FullRowSelect = true,
+                ShowItemToolTips = true, // voller Pfad beim Überfahren
                 MultiSelect = true,
                 HideSelection = false,
                 BorderStyle = BorderStyle.None,
@@ -156,15 +163,22 @@ namespace MonitorDimmer
             var open = new ModernButton("Ordner öffnen", '\uE838', false, k) { Tag = "sel" };
             open.Click += (s, e) => OpenFolder();
             buttons.Controls.AddRange(new Control[] { add, remove, _moveButton, removeMissing, open });
-            var close = new ModernButton("Schließen", '\0', false, k) { Margin = new Padding(0) };
-            var right = new FlowLayoutPanel { Dock = DockStyle.Right, AutoSize = true, WrapContents = false, BackColor = CBack, Padding = new Padding(0, S(16), 0, 0) };
-            right.Controls.Add(close);
-            close.Click += (s, e) => Close();
+            // Speichern (primär), rechts daneben Abbrechen; links davon die rote Fehlerzeile
+            var right = new FlowLayoutPanel { Dock = DockStyle.Right, AutoSize = true, WrapContents = false, FlowDirection = FlowDirection.RightToLeft, BackColor = CBack, Padding = new Padding(0, S(16), 0, 0) };
+            var cancel = new ModernButton("Abbrechen", '\0', false, k) { Margin = new Padding(0) };
+            var saveButton = new ModernButton("Speichern", '\uE74E', true, k);
+            _error = new Label { AutoSize = true, ForeColor = CMissing, BackColor = CBack, MinimumSize = new Size(0, saveButton.Height), TextAlign = ContentAlignment.MiddleRight, Margin = new Padding(0, 0, S(12), 0) };
+            right.Controls.Add(cancel);
+            right.Controls.Add(saveButton);
+            right.Controls.Add(_error);
+            cancel.Click += (s, e) => Close(); // verwirft alle Änderungen
+            saveButton.Click += (s, e) => SaveAll();
             actions.Controls.Add(buttons);
             actions.Controls.Add(right);
+            ButtonRow.Fit(actions, buttons, right); // schmal: Knöpfe links nur mit Symbol, nichts liegt unter "Speichern"
 
             // ---------- Hinweis ----------
-            var info = new InfoBanner("Die Liste wird alphabetisch sortiert und ohne Doppelte gespeichert. Vorher wird eine Sicherung angelegt (Einstellungen > Sicherungen öffnen).\n" +
+            var info = new InfoBanner("Änderungen werden erst mit „Speichern“ übernommen – alphabetisch sortiert, ohne Doppelte und mit vorheriger Sicherung (Einstellungen > Sicherungen öffnen).\n" +
                 "Doppelklick auf ein Spiel öffnet seinen Ordner, Entf entfernt die markierten Einträge.", k) { Dock = DockStyle.Bottom };
 
             body.Controls.Add(card);
@@ -174,7 +188,8 @@ namespace MonitorDimmer
             Controls.Add(body);
             Controls.Add(head);
             Controls.Add(new SignatureFooter(k));
-            CancelButton = close;
+            CancelButton = cancel;
+            AcceptButton = saveButton;
 
             Reload();
             Resize += (s, e) => StretchPathColumn();
@@ -192,17 +207,37 @@ namespace MonitorDimmer
             if (_list.Columns.Count < 4) return;
             var w = ListViewHelper.Fit(_list, S(12));
             Array.Copy(w, _contentWidth, Math.Min(w.Length, _contentWidth.Length));
+            StretchPathColumn();
         }
 
-        /// <summary>Die Spalte "Pfad" füllt den restlichen Platz (aber nie schmaler als ihr Inhalt).</summary>
+        /// <summary>
+        /// Spalten an die Breite anpassen, ohne dass die Liste waagrecht scrollt: Passt alles, bekommen die Spalten ihre
+        /// volle Breite und "Pfad" den Rest. Sonst werden "Spiel" und "Programm" begrenzt und "Pfad" wird gekürzt
+        /// (mit „…“, der volle Pfad steht im Tooltip).
+        /// </summary>
         private void StretchPathColumn()
         {
-            ListViewHelper.Stretch(_list);
+            if (_list.Columns.Count < 4 || _contentWidth[0] == 0) return;
+            int avail = _list.ClientSize.Width - 1;
+            int game = _contentWidth[0], prog = _contentWidth[1], status = _contentWidth[2];
+            if (game + prog + status + _contentWidth[3] > avail)
+            {
+                game = Math.Min(game, S(280));
+                prog = Math.Min(prog, S(200));
+            }
+            int path = Math.Max(S(160), avail - game - prog - status);
+            _list.BeginUpdate();
+            if (_list.Columns[0].Width != game) _list.Columns[0].Width = game;
+            if (_list.Columns[1].Width != prog) _list.Columns[1].Width = prog;
+            if (_list.Columns[2].Width != status) _list.Columns[2].Width = status;
+            if (_list.Columns[3].Width != path) _list.Columns[3].Width = path;
+            _list.EndUpdate();
         }
 
         /// <summary>Fenster beim Öffnen so breit machen, dass alle Spalten passen (höchstens Bildschirmbreite).</summary>
         private void FitWindowWidth()
         {
+            if (!TopLevel) { StretchPathColumn(); return; } // als Seite im Hauptfenster: Breite gibt das Fenster vor
             int needed = _contentWidth.Sum() + SystemInformation.VerticalScrollBarWidth + S(4);
             int extra = Width - _list.ClientSize.Width;   // Rahmen, Abstände, Liste-Rand
             var area = Screen.FromPoint(Cursor.Position).WorkingArea;
@@ -232,13 +267,37 @@ namespace MonitorDimmer
             string selected = _profile.SelectedItem is ProfileItem ? ((ProfileItem)_profile.SelectedItem).Profile.Name : null;
             _profile.Items.Clear();
             foreach (var p in _config().Profiles.Where(x => x.IsAutomatic))
-                _profile.Items.Add(new ProfileItem { Profile = p });
+                _profile.Items.Add(new ProfileItem { Profile = WithPending(p) });
             if (_profile.Items.Count == 0) return;
             int idx = 0;
             for (int i = 0; i < _profile.Items.Count; i++)
                 if (((ProfileItem)_profile.Items[i]).Profile.Name == selected) idx = i;
             _profile.SelectedIndex = idx;
             FillList();
+        }
+
+        /// <summary>Profil mit den noch nicht gespeicherten Änderungen (nur für die Anzeige).</summary>
+        private DimmingProfile WithPending(DimmingProfile p)
+        {
+            List<string> paths;
+            if (!_pending.TryGetValue(p.Name, out paths)) return p;
+            return new DimmingProfile
+            {
+                Name = p.Name,
+                DisplayName = p.DisplayName,
+                IsUndimmed = p.IsUndimmed,
+                AutoApply = p.AutoApply,
+                ForegroundTracker = p.ForegroundTracker,
+                MouseTracker = p.MouseTracker,
+                Patterns = paths.Select(x => new ProcessPattern(x)).ToList()
+            };
+        }
+
+        /// <summary>Aktuelle Pfade eines Profils einschließlich der gesammelten Änderungen.</summary>
+        private List<string> PathsOf(DimmingProfile p)
+        {
+            List<string> paths;
+            return _pending.TryGetValue(p.Name, out paths) ? paths.ToList() : p.Patterns.Select(x => x.Raw).ToList();
         }
 
         private DimmingProfile CurrentProfile
@@ -274,7 +333,7 @@ namespace MonitorDimmer
                     case EntryState.FileNameOnly: status = "jeder Ordner"; color = CInfo; break;
                     default: status = "nicht prüfbar"; color = CMuted; break;
                 }
-                var item = new ListViewItem(GameName(pat.Expanded)) { Tag = e, UseItemStyleForSubItems = false };
+                var item = new ListViewItem(GameName(pat.Expanded)) { Tag = e, UseItemStyleForSubItems = false, ToolTipText = pat.Raw };
                 item.SubItems.Add(Path.GetFileName(pat.Expanded));
                 var st = item.SubItems.Add(status);
                 st.ForeColor = color;
@@ -407,17 +466,34 @@ namespace MonitorDimmer
             return _list.SelectedItems.Cast<ListViewItem>().Select(i => ((Entry)i.Tag).Raw).ToList();
         }
 
+        /// <summary>Änderung vormerken (übernommen wird erst mit "Speichern").</summary>
         private void Save(string profileName, List<string> paths)
+        {
+            _pending[profileName] = paths.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            _error.Text = "";
+            Reload();
+        }
+
+        /// <summary>Alle gesammelten Änderungen speichern; bei einem Fehler bleibt das Fenster offen.</summary>
+        private void SaveAll()
         {
             try
             {
-                _save(profileName, paths);
+                if (_pendingIgnore.Count > 0) { _ignore(_pendingIgnore.ToList()); _pendingIgnore.Clear(); }
+                foreach (var name in _pending.Keys.ToList())
+                {
+                    _save(name, _pending[name]);
+                    _pending.Remove(name);
+                }
             }
             catch (Exception ex)
             {
-                MessageBox.Show(this, "Speichern fehlgeschlagen:\r\n" + ex.Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Error);
+                _error.Text = "Speichern fehlgeschlagen: " + ex.Message;
+                Reload();
+                return;
             }
-            Reload();
+            DialogResult = DialogResult.OK;
+            Close();
         }
 
         private void AddGame()
@@ -493,15 +569,11 @@ namespace MonitorDimmer
                     using (var dlg = new GameScanDialog(results, roots, profileTitle, Icon))
                     {
                         if (dlg.ShowDialog(this) != DialogResult.OK) return;
-                        if (dlg.Ignore.Count > 0)
-                        {
-                            try { _ignore(dlg.Ignore); }
-                            catch (Exception ex) { MessageBox.Show(this, "Speichern fehlgeschlagen:\r\n" + ex.Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Error); }
-                        }
+                        if (dlg.Ignore.Count > 0) _pendingIgnore.AddRange(dlg.Ignore); // wird beim Speichern übernommen
                         if (dlg.Replacements.Count == 0 && dlg.Additions.Count == 0) { Reload(); return; }
                         var target = _config().Find(profileName);
                         if (target == null) return;
-                        var paths = target.Patterns.Select(x => x.Raw)
+                        var paths = PathsOf(target)
                             .Select(x => dlg.Replacements.ContainsKey(x) ? dlg.Replacements[x] : x).ToList();
                         paths.AddRange(dlg.Additions);
                         Save(profileName, paths);
@@ -551,18 +623,10 @@ namespace MonitorDimmer
             var sel = SelectedPaths();
             if (src == null || sel.Count == 0) return;
             var set = new HashSet<string>(sel, StringComparer.OrdinalIgnoreCase);
-            var targetPaths = target.Patterns.Select(x => x.Raw).ToList();
+            var targetPaths = PathsOf(target);
             targetPaths.AddRange(sel);
-            try
-            {
-                _save(target.Name, targetPaths);
-                _save(src.Name, CurrentPaths().Where(x => !set.Contains(x)).ToList());
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show(this, "Verschieben fehlgeschlagen:\r\n" + ex.Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Error);
-            }
-            Reload();
+            _pending[target.Name] = targetPaths.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            Save(src.Name, CurrentPaths().Where(x => !set.Contains(x)).ToList());
         }
 
         private void SelectPaths(IEnumerable<string> paths)

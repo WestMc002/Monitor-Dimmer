@@ -65,10 +65,11 @@ namespace MonitorDimmer
                 using (var backdrop = new Backdrop())
                 using (var manager = new MonitorManager())
                 {
-                    // Hintergrundfläche einmal vorab anzeigen: das erste Anzeigen schloss sonst das Tray-Menü (leeres hell.png)
+                    // Hintergrundfläche einmal anlegen und sichtbar lassen, zwischen den Aufnahmen nur verschieben:
+                    // frisch eingeblendet schloss sie das Tray-Menü bzw. wäre bei der ersten Aufnahme noch nicht fertig
                     backdrop.Cover(new Rectangle(area.Right - 2, area.Bottom - 2, 1, 1), Color.Black, IntPtr.Zero);
                     Pump(300);
-                    backdrop.Hide();
+                    backdrop.Park();
 
                     foreach (bool dark in new[] { false, true })
                     {
@@ -90,12 +91,32 @@ namespace MonitorDimmer
                             Pump(200);
                         }
 
-                        Shot(backdrop, () => new GameListForm(() => cfg, (p, l) => { }, l => { }, icon), Path.Combine(outDir, "spieleliste-" + suffix + ".png"));
-                        Shot(backdrop, () => new ActionsForm(cfg, temp, dimmed.Name, icon), Path.Combine(outDir, "aktionen-" + suffix + ".png"));
-                        Shot(backdrop, () => new HotkeyForm(cfg, k => "", icon), Path.Combine(outDir, "tastenkuerzel-" + suffix + ".png"));
-                        Shot(backdrop, () => new MonitorForm(manager, () => cfg, () => dimmed, icon), Path.Combine(outDir, "monitore-" + suffix + ".png"));
-                        Shot(backdrop, () => new AboutDialog(null), Path.Combine(outDir, "info-" + suffix + ".png"));
+                        // Hauptfenster mit Navigation, je Seite ein Bild
+                        var games = new PageDef { Text = "Spieleliste", Glyph = MenuHelper.Game, Create = () => new GameListForm(() => cfg, (p, l) => { }, l => { }, icon) };
+                        var actions = new PageDef { Text = "Aktionen", Glyph = MenuHelper.Actions, Create = () => new ActionsForm(cfg, temp, dimmed.Name, icon) };
+                        var hotkeys = new PageDef { Text = "Tastenkürzel", Glyph = MenuHelper.Keyboard, Create = () => new HotkeyForm(cfg, k => "", icon) };
+                        var monitors = new PageDef { Text = "Monitore", Glyph = MenuHelper.Monitor, Create = () => new MonitorForm(manager, () => cfg, () => dimmed, icon) };
+                        using (var main = new MainWindow(new List<PageDef> { monitors, games, hotkeys, actions }, icon, c => { }, () => { }))
+                        {
+                            main.ShowInTaskbar = false;
+                            main.Show();
+                            main.TopMost = true;
+                            Shot(backdrop, main, games, Path.Combine(outDir, "spieleliste-" + suffix + ".png"));
+                            Shot(backdrop, main, actions, Path.Combine(outDir, "aktionen-" + suffix + ".png"));
+                            Shot(backdrop, main, hotkeys, Path.Combine(outDir, "tastenkuerzel-" + suffix + ".png"));
+                            Shot(backdrop, main, monitors, Path.Combine(outDir, "monitore-" + suffix + ".png"));
+                            // Info als kleines Pop-up, solange das Hauptfenster noch offen ist: sonst holt Windows das
+                            // zuletzt aktive Fenster (z. B. die Konsole der Erstellen.bat) wieder nach vorn, vor das Info-Fenster
+                            Shot(backdrop, () => new AboutDialog(null), Path.Combine(outDir, "info-" + suffix + ".png"));
+                            main.Close();
+                        }
+                        Pump(300);
                     }
+                }
+                if (Errors.Count > 0)
+                {
+                    File.WriteAllLines(Path.Combine(outDir, "Fehler.txt"), Errors);
+                    return false;
                 }
                 return true;
             }
@@ -123,7 +144,16 @@ namespace MonitorDimmer
             };
         }
 
+        /// <summary>Fehler einzelner Bilder: die übrigen Bilder entstehen trotzdem, alles steht danach in Fehler.txt.</summary>
+        private static readonly List<string> Errors = new List<string>();
+
         private static void Shot(Backdrop backdrop, Func<Form> create, string file)
+        {
+            try { ShotCore(backdrop, create, file); }
+            catch (Exception ex) { Errors.Add(Path.GetFileName(file) + ": " + ex.Message); }
+        }
+
+        private static void ShotCore(Backdrop backdrop, Func<Form> create, string file)
         {
             using (var f = create())
             {
@@ -131,7 +161,7 @@ namespace MonitorDimmer
                 f.Show();
                 f.TopMost = true;
                 f.Activate();
-                Pump(1500); // Aufbau, Symbole und Listen laden
+                Pump(1500);
                 RECT r;
                 Rectangle bounds = DwmGetWindowAttribute(f.Handle, DWMWA_EXTENDED_FRAME_BOUNDS, out r, Marshal.SizeOf(typeof(RECT))) == 0
                     ? Rectangle.FromLTRB(r.Left, r.Top, r.Right, r.Bottom)
@@ -140,6 +170,24 @@ namespace MonitorDimmer
                 f.Close();
             }
             Pump(300);
+        }
+
+        private static void Shot(Backdrop backdrop, MainWindow main, PageDef page, string file)
+        {
+            try { ShotCore(backdrop, main, page, file); }
+            catch (Exception ex) { Errors.Add(Path.GetFileName(file) + ": " + ex.Message); }
+        }
+
+        private static void ShotCore(Backdrop backdrop, MainWindow main, PageDef page, string file)
+        {
+            main.ShowPage(page);
+            main.Activate();
+            Pump(1500); // Aufbau, Symbole und Listen laden
+            RECT r;
+            Rectangle bounds = DwmGetWindowAttribute(main.Handle, DWMWA_EXTENDED_FRAME_BOUNDS, out r, Marshal.SizeOf(typeof(RECT))) == 0
+                ? Rectangle.FromLTRB(r.Left, r.Top, r.Right, r.Bottom)
+                : main.Bounds;
+            Save(Capture(backdrop, main.Handle, bounds, Margin(main)), file);
         }
 
         /// <summary>Rand um das Fenster für den Schatten (24 Einheiten).</summary>
@@ -153,19 +201,68 @@ namespace MonitorDimmer
         private static Bitmap Capture(Backdrop backdrop, IntPtr target, Rectangle bounds, int margin)
         {
             var r = Rectangle.Inflate(bounds, margin, margin);
-            backdrop.Cover(r, Color.Black, target);
-            Pump(300);
-            using (var onBlack = Grab(r))
+            // Liegt das Fenster nicht vor der Hintergrundfläche, wäre das Bild leer: dann Fenster erneut nach vorn holen
+            // und bis zu dreimal wiederholen; danach mit Angaben in Fehler.txt abbrechen
+            for (int attempt = 1; ; attempt++)
             {
-                backdrop.Cover(r, Color.White, target);
+                Bitmap result;
+                backdrop.Cover(r, Color.Black, target);
                 Pump(300);
-                using (var onWhite = Grab(r))
+                using (var onBlack = Grab(r))
                 {
-                    backdrop.Hide();
-                    return Combine(onBlack, onWhite);
+                    backdrop.Cover(r, Color.White, target);
+                    Pump(300);
+                    using (var onWhite = Grab(r))
+                    {
+                        backdrop.Park();
+                        result = Combine(onBlack, onWhite);
+                    }
                 }
+                if (!IsEmpty(result)) return result;
+                result.Dispose();
+                var center = new Point(bounds.Left + bounds.Width / 2, bounds.Top + bounds.Height / 2);
+                IntPtr top = GetAncestor(WindowFromPoint(center), 2); // GA_ROOT
+                string info = string.Format("Aufnahme leer (Versuch {0}): Fenster {1:X} sichtbar={2}, Bereich {3}, oben liegt {4:X} ({5}), Hintergrund {6:X}",
+                    attempt, target.ToInt64(), IsWindowVisible(target), bounds, top.ToInt64(), Describe(top), backdrop.Handle.ToInt64());
+                if (attempt >= 3) throw new Exception(info);
+                SetWindowPos(target, new IntPtr(-1), 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0040); // HWND_TOPMOST, NOSIZE | NOMOVE | SHOWWINDOW
+                SetForegroundWindow(target);
+                Pump(1000);
             }
         }
+
+        /// <summary>true, wenn das Bild ganz durchsichtig ist (Fenster lag hinter der Hintergrundfläche).</summary>
+        private static bool IsEmpty(Bitmap bmp)
+        {
+            for (int y = bmp.Height / 4; y < bmp.Height * 3 / 4; y += 7)
+                for (int x = bmp.Width / 4; x < bmp.Width * 3 / 4; x += 7)
+                    if (bmp.GetPixel(x, y).A > 0) return false;
+            return true;
+        }
+
+        /// <summary>Klasse, Titel und Programm eines Fensters (für Fehler.txt).</summary>
+        private static string Describe(IntPtr h)
+        {
+            var cls = new System.Text.StringBuilder(256);
+            var title = new System.Text.StringBuilder(256);
+            GetClassName(h, cls, cls.Capacity);
+            GetWindowText(h, title, title.Capacity);
+            uint pid;
+            GetWindowThreadProcessId(h, out pid);
+            string proc = "";
+            try { proc = Process.GetProcessById((int)pid).ProcessName; } catch { }
+            var c = Control.FromHandle(h);
+            return "Klasse " + cls + ", Titel \"" + title + "\", Programm " + proc + (c != null ? ", " + c.GetType().Name : "");
+        }
+
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetClassName(IntPtr h, System.Text.StringBuilder s, int n);
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetWindowText(IntPtr h, System.Text.StringBuilder s, int n);
+        [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+        [DllImport("user32.dll")] private static extern IntPtr WindowFromPoint(Point p);
+        [DllImport("user32.dll")] private static extern IntPtr GetAncestor(IntPtr hwnd, uint flags);
+        [DllImport("user32.dll")] private static extern bool IsWindowVisible(IntPtr hwnd);
+        [DllImport("user32.dll")] private static extern bool SetForegroundWindow(IntPtr hwnd);
+        [DllImport("user32.dll")] private static extern bool SetWindowPos(IntPtr hWnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
 
         private static Bitmap Grab(Rectangle r)
         {
@@ -257,6 +354,12 @@ namespace MonitorDimmer
                 SetWindowPos(Handle, HwndTopmost, 0, 0, 0, 0, NoMoveSizeActivate);
                 SetWindowPos(target, HwndTopmost, 0, 0, 0, 0, NoMoveSizeActivate);
                 Refresh();
+            }
+
+            /// <summary>Aus dem Bild schieben (bleibt sichtbar, wird also nicht neu eingeblendet).</summary>
+            public void Park()
+            {
+                Bounds = new Rectangle(-32000, -32000, 1, 1);
             }
 
             private static readonly IntPtr HwndTopmost = new IntPtr(-1);

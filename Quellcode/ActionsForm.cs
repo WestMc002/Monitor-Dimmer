@@ -152,6 +152,7 @@ namespace MonitorDimmer
             right.Controls.Add(save);
             actions.Controls.Add(left);
             actions.Controls.Add(right);
+            ButtonRow.Fit(actions, left, right); // schmal: Knöpfe links nur mit Symbol, nichts liegt unter "Speichern"
 
             var info = new InfoBanner("Die Aktionen laufen nacheinander im Hintergrund. Dienste und Energiesparpläne brauchen Adminrechte.\n" +
                 "Doppelklick bearbeitet, Entf entfernt. Ins Protokoll kommt jede Aktion mit Ergebnis.", k) { Dock = DockStyle.Bottom };
@@ -165,6 +166,7 @@ namespace MonitorDimmer
             Controls.Add(head);
             Controls.Add(new SignatureFooter(k));
             CancelButton = cancel;
+            AcceptButton = save;
 
             _active = _applied;
             _profile.SelectedIndexChanged += (s, e) => ShowProfile();

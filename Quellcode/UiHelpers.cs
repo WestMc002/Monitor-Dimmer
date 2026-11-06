@@ -4,6 +4,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 using System;
+using System.Linq;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
@@ -42,6 +43,36 @@ namespace MonitorDimmer
         }
 
         private static Color SelectedBack { get { return Theme.Dark ? Color.FromArgb(55, 55, 55) : Color.FromArgb(240, 240, 240); } }
+
+        [DllImport("user32.dll")] private static extern IntPtr SendMessage(IntPtr h, int msg, IntPtr w, IntPtr l);
+        [DllImport("user32.dll")] private static extern bool GetWindowRect(IntPtr h, out RECT r);
+        [StructLayout(LayoutKind.Sequential)] private struct RECT { public int Left, Top, Right, Bottom; }
+
+        /// <summary>
+        /// Das dunkle Windows-Thema (DarkMode_Explorer) zeichnet in der Detailansicht senkrechte Spaltenlinien in die
+        /// leere Fläche unter den Einträgen. Nach dem Zeichnen wird diese Fläche in der Listenfarbe übermalt.
+        /// </summary>
+        protected override void WndProc(ref Message m)
+        {
+            base.WndProc(ref m);
+            if (m.Msg != 0x000F /* WM_PAINT */ || !Theme.Dark || View != View.Details || !IsHandleCreated) return;
+            int top = 0;
+            if (Items.Count > 0)
+            {
+                try { top = Items[Items.Count - 1].Bounds.Bottom; } catch { return; }
+            }
+            else if (HeaderStyle != ColumnHeaderStyle.None)
+            {
+                IntPtr header = SendMessage(Handle, 0x101F /* LVM_GETHEADER */, IntPtr.Zero, IntPtr.Zero);
+                RECT r;
+                if (header != IntPtr.Zero && GetWindowRect(header, out r)) top = r.Bottom - r.Top;
+            }
+            if (top < 0) top = 0;
+            if (top >= ClientSize.Height) return;
+            using (var g = Graphics.FromHwnd(Handle))
+            using (var b = new SolidBrush(BackColor))
+                g.FillRectangle(b, 0, top, ClientSize.Width, ClientSize.Height - top);
+        }
 
         protected override void OnDrawColumnHeader(DrawListViewColumnHeaderEventArgs e)
         {
@@ -492,6 +523,52 @@ namespace MonitorDimmer
             Color fore = _cb.Enabled ? _cb.ForeColor : muted;
             TextRenderer.DrawText(g, _cb.Text, _cb.Font, textRect, fore,
                 TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix);
+        }
+    }
+
+    /// <summary>
+    /// Knopfleiste unter einer Liste: Reicht die Breite nicht (z. B. als Seite im Hauptfenster neben "Speichern"/"Abbrechen"),
+    /// werden die Knöpfe links von hinten nach vorn zu reinen Symbolknöpfen (Text als Tooltip). Der erste Knopf behält
+    /// seinen Text. So überdeckt rechts nichts die Knöpfe links.
+    /// </summary>
+    internal static class ButtonRow
+    {
+        public static void Fit(Control row, FlowLayoutPanel left, Control right)
+        {
+            var tip = new ToolTip();
+            var texts = new Dictionary<ModernButton, string>();
+            foreach (var b in left.Controls.OfType<ModernButton>())
+                if (!string.IsNullOrEmpty(b.Text)) texts[b] = b.Text;
+            bool busy = false;
+            EventHandler fit = (s, e) =>
+            {
+                if (busy) return;
+                busy = true;
+                try
+                {
+                    var buttons = left.Controls.OfType<ModernButton>().Where(b => texts.ContainsKey(b)).ToList();
+                    foreach (var b in buttons)
+                        if (b.Text != texts[b]) { b.Text = texts[b]; tip.SetToolTip(b, null); }
+                    int avail = row.ClientSize.Width - right.Width - left.Padding.Horizontal;
+                    for (int i = buttons.Count - 1; i >= 1 && Needed(left) > avail; i--)
+                    {
+                        var b = buttons[i];
+                        b.Text = "";
+                        tip.SetToolTip(b, texts[b]);
+                    }
+                }
+                finally { busy = false; }
+            };
+            row.Resize += fit;
+            right.Resize += fit;
+            fit(row, EventArgs.Empty);
+        }
+
+        private static int Needed(FlowLayoutPanel left)
+        {
+            int w = 0;
+            foreach (Control c in left.Controls) if (c.Visible) w += c.Width + c.Margin.Horizontal;
+            return w;
         }
     }
 }

@@ -32,6 +32,13 @@ namespace MonitorDimmer
         private readonly Timer _reloadTimer = new Timer { Interval = 1000 };
         private readonly Timer _reapplyTimer = new Timer();
         private readonly Timer _gameExitTimer = new Timer { Interval = 2000 };
+        /// <summary>Update-Prüfung: erstes Mal 1 Minute nach dem Start, danach stündlich nachsehen (geprüft wird höchstens alle 20 h).</summary>
+        private readonly Timer _updateTimer = new Timer { Interval = 60 * 1000 };
+        private ReleaseInfo _available;      // neuere Version auf GitHub, sonst null
+        private string _notifiedVersion;     // für diese Version wurde schon ein Hinweis gezeigt
+        private bool _installing;
+        /// <summary>Gesetzt beim Neustart nach einem Update (--nach-update).</summary>
+        public static bool AfterUpdate;
 
         private DimmingProfile _current;          // gerade angewendetes Profil (Monitore)
         private DimmingProfile _scriptProfile;    // Profil, dessen "Applied"-Skripte zuletzt gelaufen sind
@@ -108,7 +115,8 @@ namespace MonitorDimmer
             _sync = System.Threading.SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
             _tray.ContextMenuStrip.Opening += (s, e) => BuildMenu();
             _tray.ContextMenuStrip.Opened += (s, e) => MenuHelper.RoundCorners(_tray.ContextMenuStrip);
-            _tray.MouseDoubleClick += (s, e) => { if (e.Button == MouseButtons.Left) TogglePause(); };
+            // Doppelklick auf das Symbol im Infobereich: Fenster mit der Spieleliste öffnen (ist es schon offen: nach vorn holen)
+            _tray.MouseDoubleClick += (s, e) => { if (e.Button == MouseButtons.Left) ShowMainWindow(); };
             BuildMenu();
             _tray.Visible = true;
 
@@ -141,6 +149,37 @@ namespace MonitorDimmer
             SystemEvents.SessionEnding += OnSessionEnding;
             UpdateTrayText();
             CheckAutostartPath();
+
+            // ---------- Update-Prüfung (wie Fensterpositionen wiederherstellen) ----------
+            if (AfterUpdate)
+            {
+                string result = Updater.LastResult();
+                if (result != null && result.StartsWith("OK"))
+                {
+                    Log.Info("Update auf Version {0} installiert.", result.Substring(2).Trim());
+                    ShowBalloon("Update auf Version " + result.Substring(2).Trim() + " installiert.");
+                }
+                else if (result != null)
+                {
+                    string msg = result.Replace("FEHLER", "").Trim();
+                    Log.Error("Update fehlgeschlagen: {0} - die bisherige Version läuft weiter.", msg);
+                    ShowBalloon("Update fehlgeschlagen: " + msg + "\r\nDie bisherige Version läuft weiter.", ToolTipIcon.Warning);
+                }
+            }
+            AboutDialog.Updates = new UpdateHooks
+            {
+                Status = UpdateStatusNow,
+                Auto = () => Updater.Auto,
+                SetAuto = on => Updater.Auto = on,
+                CheckNow = () => CheckForUpdates(true),
+                CanInstall = () => _available != null && !string.IsNullOrEmpty(_available.ZipUrl) && Updater.InstallBlocker() == null,
+                Install = InstallUpdate,
+                OpenPage = OpenReleasePage
+            };
+            _tray.BalloonTipClicked += (s, e) => { if (_available != null && _balloonIsUpdate) InstallUpdate(); };
+            // erste Prüfung 60 s nach dem Start, danach alle 6 Stunden nachsehen, ob sie fällig ist (höchstens alle 20 Stunden)
+            _updateTimer.Tick += (s, e) => { _updateTimer.Interval = 6 * 60 * 60 * 1000; CheckForUpdates(false); };
+            _updateTimer.Start();
         }
 
         // ================================================================== Kernlogik
@@ -618,6 +657,19 @@ namespace MonitorDimmer
             menu.Items.Add(header);
             menu.Items.Add(new ToolStripSeparator());
 
+            // ---------- Neue Version (wie die Hinweisleiste bei Fensterpositionen) ----------
+            if (_available != null)
+            {
+                // oben im Menü fett (globale Vorgabe); im Projektordner bzw. ohne ZIP öffnet der Eintrag die Release-Seite
+                bool canInstall = Updater.InstallBlocker() == null && !string.IsNullOrEmpty(_available.ZipUrl);
+                var install = Item(_installing ? "Update wird geladen ..." : "Update auf " + _available.Version + " installieren ...", MenuHelper.Download,
+                    canInstall ? (Action)InstallUpdate : OpenReleasePage);
+                install.Font = new Font(menu.Font, FontStyle.Bold);
+                install.Enabled = !_installing;
+                menu.Items.Add(install);
+                menu.Items.Add(new ToolStripSeparator());
+            }
+
             // ---------- Modus ----------
             menu.Items.Add(Section("Modus"));
             var auto = Item("Automatik (Spiele erkennen)", MenuHelper.Auto, () => Enforce(null));
@@ -687,7 +739,7 @@ namespace MonitorDimmer
             settings.DropDownItems.Add(Item("Sicherungen öffnen", MenuHelper.History, OpenBackups));
             settings.DropDownItems.Add(Item("Protokoll öffnen", MenuHelper.Log, () => OpenFile(Log.FilePath, true)));
             settings.DropDownItems.Add(Item("Programmordner öffnen", MenuHelper.Folder, () => OpenFile(_baseDir, false)));
-            settings.DropDownItems.Add(Item("Info über Monitor Dimmer", MenuHelper.Info, () => AboutDialog.ShowFor(null)));
+            settings.DropDownItems.Add(Item("Info über Monitor Dimmer", MenuHelper.Info, ShowInfo));
             settings.DropDownItems.Add(new ToolStripSeparator());
             bool autoOn = Autostart.IsEnabled();
             var autostart = Item("Mit Windows starten (mit Adminrechten)", MenuHelper.Startup, () => ToggleAutostart(autoOn));
@@ -788,99 +840,177 @@ namespace MonitorDimmer
             return hk == null ? null : HotkeyActions.Display(hk.Keys).Replace(" + ", "+");
         }
 
-        private void ShowMonitors()
-        {
-            MonitorForm.ShowWindow(_monitors, () => _config, () => _current, Icon.ExtractAssociatedIcon(Application.ExecutablePath));
-        }
+        // ================================================================== Hauptfenster mit Navigation
 
-        private void ShowGameList()
-        {
-            GameListForm.ShowWindow(() => _config, SaveProcessList, SaveIgnoredFolders, Icon.ExtractAssociatedIcon(Application.ExecutablePath));
-        }
+        private MainWindow _main;
+        private PageDef _pageMonitors, _pageGames, _pageHotkeys, _pageActions;
 
-        private bool _hotkeyFormOpen;
-
-        private void ShowHotkeys()
+        /// <summary>Seiten des Hauptfensters (ein Fenster statt einzelner Fenster, wie Wake on LAN).</summary>
+        private void CreatePages()
         {
-            if (_hotkeyFormOpen) return;
-            _hotkeyFormOpen = true;
-            _hotkeysSuspended = true;
-            _window.UnregisterAllHotkeys();
-            try
+            Func<Icon> icon = () => Icon.ExtractAssociatedIcon(Application.ExecutablePath);
+            _pageMonitors = new PageDef
             {
-                using (var f = new HotkeyForm(_config, keys =>
+                Text = "Monitore", Glyph = MenuHelper.Monitor,
+                Create = () => new MonitorForm(_monitors, () => _config, () => _current, icon())
+            };
+            _pageGames = new PageDef
+            {
+                Text = "Spieleliste", Glyph = MenuHelper.Game,
+                Create = () => new GameListForm(() => _config, SaveProcessList, SaveIgnoredFolders, icon()),
+                Done = (f, r) => r == DialogResult.OK ? "Spieleliste gespeichert." : null
+            };
+            _pageHotkeys = new PageDef
+            {
+                Text = "Tastenkürzel", Glyph = MenuHelper.Keyboard,
+                Create = () => new HotkeyForm(_config, keys =>
                 {
                     string st;
                     return _hotkeyStatus.TryGetValue(keys, out st) ? st : null;
-                }, Icon.ExtractAssociatedIcon(Application.ExecutablePath)))
+                }, icon()),
+                // solange die Seite offen ist, sind die Tastenkürzel abgeschaltet
+                Opened = () =>
                 {
-                    if (f.ShowDialog() == DialogResult.OK)
-                    {
-                        _configWatcher.EnableRaisingEvents = false;
-                        try
-                        {
-                            AppConfig.SetHotkeys(_configPath, f.Result);
-                            Log.Info("Tastenkürzel gespeichert ({0})", f.Result.Count);
-                            ReloadConfig(true);
-                        }
-                        catch (Exception ex)
-                        {
-                            Log.Error("Tastenkürzel speichern: {0}", ex.Message);
-                            ShowBalloon("Speichern fehlgeschlagen: " + ex.Message, ToolTipIcon.Error);
-                        }
-                        finally
-                        {
-                            _configWatcher.EnableRaisingEvents = true;
-                        }
-                    }
+                    _hotkeysSuspended = true;
+                    _window.UnregisterAllHotkeys();
+                },
+                Done = (f, r) => r == DialogResult.OK ? SaveHotkeys(((HotkeyForm)f).Result) : null,
+                Closed = () =>
+                {
+                    _hotkeysSuspended = false;
+                    _window.UnregisterAllHotkeys();
+                    RegisterHotkeys();
                 }
+            };
+            _pageActions = new PageDef
+            {
+                Text = "Aktionen", Glyph = MenuHelper.Actions,
+                Create = () =>
+                {
+                    var def = DefaultListProfile();
+                    string select = _current != null && !_current.IsUndimmed ? _current.Name : (def != null ? def.Name : null);
+                    return new ActionsForm(_config, _resourcesDir, select, icon());
+                },
+                Done = (f, r) => r == DialogResult.OK ? SaveActions((ActionsForm)f) : null
+            };
+        }
+
+        private void OpenPage(PageDef page)
+        {
+            if (_pageMonitors == null) CreatePages();
+            if (_main == null || _main.IsDisposed)
+            {
+                _main = new MainWindow(new List<PageDef> { _pageMonitors, _pageGames, _pageHotkeys, _pageActions },
+                    Icon.ExtractAssociatedIcon(Application.ExecutablePath),
+                    ShowSettingsMenu,
+                    () => _sync.Post(_ => ExitThread(), null)); // "Beenden" erst nach dem Klick ausführen
+                _main.FormClosed += (s, e) => _main = null;
+                RefreshUpdateBar();
+            }
+            _main.Open(page);
+        }
+
+        private void ShowMonitors() { OpenPage(Pages().Item1); }
+        private void ShowGameList() { OpenPage(Pages().Item2); }
+        private void ShowHotkeys() { OpenPage(Pages().Item3); }
+        private void ShowActions() { OpenPage(Pages().Item4); }
+        /// <summary>
+        /// "Einstellungen" unten in der Navigation des Fensters: gleiche Einträge wie Tray-Menü > Einstellungen,
+        /// als Menü rechts über dem Knopf (wie Wake on LAN).
+        /// </summary>
+        private void ShowSettingsMenu(Control anchor)
+        {
+            var mb = new ModernMenuBuilder(anchor);
+            var menu = mb.CreateMenu();
+            menu.Items.Add(mb.Item("Konfiguration bearbeiten", MenuHelper.Document, () => OpenFile(_configPath, true)));
+            menu.Items.Add(mb.Item("Konfiguration neu laden", MenuHelper.Sync, () => ReloadConfig(false)));
+            menu.Items.Add(mb.Item("Sicherungen öffnen", MenuHelper.History, OpenBackups));
+            menu.Items.Add(mb.Item("Protokoll öffnen", MenuHelper.Log, () => OpenFile(Log.FilePath, true)));
+            menu.Items.Add(mb.Item("Programmordner öffnen", MenuHelper.Folder, () => OpenFile(_baseDir, false)));
+            menu.Items.Add(mb.Item("Info über Monitor Dimmer", MenuHelper.Info, ShowInfo));
+            menu.Items.Add(new ToolStripSeparator());
+            bool autoOn = Autostart.IsEnabled();
+            var autostart = mb.Item("Mit Windows starten", MenuHelper.Startup, () => ToggleAutostart(autoOn));
+            autostart.IsToggle = true;
+            autostart.ToggleOn = autoOn;
+            autostart.ShortcutKeyDisplayString = "\u2007\u2007\u2007\u2007\u2007\u2007"; // Platz für den Schalter
+            menu.Items.Add(autostart);
+            menu.Closed += (s, e) =>
+            {
+                var w = anchor.FindForm() as MainWindow;
+                if (w != null) w.SettingsMenuClosed();
+                anchor.BeginInvoke(new Action(menu.Dispose));
+            };
+            menu.Show(anchor, new Point(anchor.Width + (int)(4 * _menuScale), anchor.Height), ToolStripDropDownDirection.AboveRight);
+        }
+
+        /// <summary>Info-Fenster als kleines Pop-up (über dem Hauptfenster, falls es offen ist).</summary>
+        private void ShowInfo() { AboutDialog.ShowFor(_main != null && !_main.IsDisposed && _main.Visible ? _main : null); }
+
+        private bool _updateLater; // "Später" in der Hinweisleiste: bis zum nächsten Programmstart nicht mehr zeigen
+
+        /// <summary>Hinweisleiste im Fenster an den Update-Stand anpassen (nur bei neuer Version sichtbar).</summary>
+        private void RefreshUpdateBar()
+        {
+            if (_main == null || _main.IsDisposed) return;
+            if (_available == null || _updateLater || Demo.Active) { _main.HideUpdateBar(); return; }
+            string blocker = Updater.InstallBlocker() ?? (string.IsNullOrEmpty(_available.ZipUrl) ? "Im Release ist keine ZIP-Datei angehängt." : null);
+            _main.ShowUpdateBar(_available.Version, blocker == null && !_installing, blocker, InstallUpdate, OpenReleasePage, () => _updateLater = true);
+        }
+
+        private void ShowMainWindow()
+        {
+            if (_main != null && !_main.IsDisposed && _main.Current != null) { _main.Open(_main.Current); return; }
+            OpenPage(Pages().Item2); // Spieleliste
+        }
+
+        private Tuple<PageDef, PageDef, PageDef, PageDef> Pages()
+        {
+            if (_pageMonitors == null) CreatePages();
+            return Tuple.Create(_pageMonitors, _pageGames, _pageHotkeys, _pageActions);
+        }
+
+        private string SaveHotkeys(List<HotkeyDef> hotkeys)
+        {
+            _configWatcher.EnableRaisingEvents = false;
+            try
+            {
+                AppConfig.SetHotkeys(_configPath, hotkeys);
+                Log.Info("Tastenkürzel gespeichert ({0})", hotkeys.Count);
+                ReloadConfig(true);
+                return "Tastenkürzel gespeichert.";
+            }
+            catch (Exception ex)
+            {
+                Log.Error("Tastenkürzel speichern: {0}", ex.Message);
+                ShowBalloon("Speichern fehlgeschlagen: " + ex.Message, ToolTipIcon.Error);
+                return null;
             }
             finally
             {
-                _hotkeysSuspended = false;
-                _hotkeyFormOpen = false;
-                _window.UnregisterAllHotkeys();
-                RegisterHotkeys();
-                if (_hotkeyStatus.Count > 0 && _hotkeyStatus.Values.All(v => v.Length == 0))
-                    ShowBalloon("Tastenkürzel sind aktiv.");
+                _configWatcher.EnableRaisingEvents = true;
             }
         }
 
-        private bool _actionsFormOpen;
-
-        /// <summary>Fenster "Aktionen" (was beim Profilwechsel passiert) öffnen und speichern.</summary>
-        private void ShowActions()
+        private string SaveActions(ActionsForm f)
         {
-            if (_actionsFormOpen) return;
-            _actionsFormOpen = true;
+            _configWatcher.EnableRaisingEvents = false;
             try
             {
-                var def = DefaultListProfile();
-                string select = _current != null && !_current.IsUndimmed ? _current.Name : (def != null ? def.Name : null);
-                using (var f = new ActionsForm(_config, _resourcesDir, select, Icon.ExtractAssociatedIcon(Application.ExecutablePath)))
-                {
-                    if (f.ShowDialog() != DialogResult.OK) return;
-                    _configWatcher.EnableRaisingEvents = false;
-                    try
-                    {
-                        AppConfig.SetActions(_configPath, f.Result, f.RemoveHandlers);
-                        Log.Info("Aktionen gespeichert");
-                        ReloadConfig(true);
-                    }
-                    catch (Exception ex)
-                    {
-                        Log.Error("Aktionen speichern: {0}", ex.Message);
-                        ShowBalloon("Aktionen konnten nicht gespeichert werden:\r\n" + ex.Message, ToolTipIcon.Error);
-                    }
-                    finally
-                    {
-                        _configWatcher.EnableRaisingEvents = true;
-                    }
-                }
+                AppConfig.SetActions(_configPath, f.Result, f.RemoveHandlers);
+                Log.Info("Aktionen gespeichert");
+                ReloadConfig(true);
+                return "Aktionen gespeichert.";
+            }
+            catch (Exception ex)
+            {
+                Log.Error("Aktionen speichern: {0}", ex.Message);
+                ShowBalloon("Aktionen konnten nicht gespeichert werden:\r\n" + ex.Message, ToolTipIcon.Error);
+                return null;
             }
             finally
             {
-                _actionsFormOpen = false;
+                _configWatcher.EnableRaisingEvents = true;
             }
         }
 
@@ -918,8 +1048,107 @@ namespace MonitorDimmer
 
         public void ShowBalloon(string text, ToolTipIcon icon)
         {
+            _balloonIsUpdate = false;
             try { _tray.ShowBalloonTip(3000, _config.ProductName, text, icon); }
             catch { }
+        }
+
+        private bool _balloonIsUpdate; // Klick auf den Hinweis startet das Update
+
+        // ================================================================== Update-Prüfung
+
+        private string _updateError; // letzte fehlgeschlagene Prüfung (nur für das Info-Fenster)
+
+        private UpdateStatus UpdateStatusNow()
+        {
+            DateTime last = Updater.LastCheck;
+            string when = last == DateTime.MinValue ? "" : "Zuletzt geprüft " + last.ToLocalTime().ToString("dd.MM.yyyy");
+            if (_available != null) return new UpdateStatus(UpdateKind.Available, "Version " + _available.Version + " verfügbar", when);
+            if (_updateError != null) return new UpdateStatus(UpdateKind.Failed, "Prüfung nicht möglich", _updateError);
+            if (last == DateTime.MinValue) return new UpdateStatus(UpdateKind.Unknown, "Noch nicht geprüft", "");
+            return new UpdateStatus(UpdateKind.Current, "Aktuell", when);
+        }
+
+        /// <summary>
+        /// Neueste Version auf GitHub abfragen (im Hintergrund). Automatisch (manual = false) höchstens alle 20 Stunden
+        /// und still; Fehler stehen dann nur im Protokoll. Das Ergebnis einer Prüfung von Hand zeigt nur das Info-Fenster.
+        /// </summary>
+        private System.Threading.Tasks.Task<UpdateStatus> CheckForUpdates(bool manual)
+        {
+            if (Demo.Active || _exiting || (!manual && (!Updater.Auto || (DateTime.UtcNow - Updater.LastCheck).TotalHours < 20)))
+                return System.Threading.Tasks.Task.FromResult(UpdateStatusNow());
+            var ui = System.Threading.Tasks.TaskScheduler.FromCurrentSynchronizationContext();
+            return System.Threading.Tasks.Task.Factory.StartNew(() => Updater.GetLatest())
+                .ContinueWith(t =>
+                {
+                    if (_exiting) return UpdateStatusNow();
+                    if (t.Exception != null)
+                    {
+                        string msg = t.Exception.GetBaseException().Message;
+                        Log.Info("Update-Prüfung nicht möglich: {0}", msg);
+                        if (manual) _updateError = msg;
+                        return UpdateStatusNow();
+                    }
+                    var release = t.Result;
+                    _updateError = null;
+                    Updater.LastCheck = DateTime.UtcNow;
+                    if (Updater.IsNewer(release.Version))
+                    {
+                        _available = release;
+                        RefreshUpdateBar();
+                        Log.Info("Neue Version {0} auf GitHub verfügbar (installiert: {1}).", release.Version, AppInfo.Version);
+                        if (release.Version != _notifiedVersion && !manual)
+                        {
+                            // Hinweis im Infobereich einmal je Version und Programmstart
+                            _notifiedVersion = release.Version;
+                            bool canInstall = Updater.InstallBlocker() == null && !string.IsNullOrEmpty(release.ZipUrl);
+                            ShowBalloon("Neue Version " + release.Version + " verfügbar – installiert ist " + AppInfo.Version + ".\r\n" +
+                                (canInstall ? "Klicken zum Aktualisieren." : "Download über die Release-Seite (Menü)."), ToolTipIcon.Info);
+                            _balloonIsUpdate = canInstall;
+                        }
+                    }
+                    else
+                    {
+                        _available = null;
+                        RefreshUpdateBar();
+                        if (manual) Log.Info("Update-Prüfung: Version {0} ist aktuell.", AppInfo.Version);
+                    }
+                    return UpdateStatusNow();
+                }, ui);
+        }
+
+        private void OpenReleasePage()
+        {
+            OpenFile(_available != null && !string.IsNullOrEmpty(_available.PageUrl) ? _available.PageUrl : Updater.ReleasesPage, false);
+        }
+
+        /// <summary>ZIP laden, Hilfsskript starten und beenden; das Skript ersetzt EXE und Liesmich und startet neu.</summary>
+        private void InstallUpdate()
+        {
+            if (_available == null || _installing) return;
+            var release = _available;
+            if (Updater.InstallBlocker() != null || string.IsNullOrEmpty(release.ZipUrl)) { OpenReleasePage(); return; } // Projektordner: nie ersetzen
+            if (MessageBox.Show("Monitor Dimmer wird beendet, auf Version " + release.Version + " aktualisiert und neu gestartet. Einstellungen bleiben erhalten." +
+                    "\r\n\r\nJetzt aktualisieren?",
+                    "Update", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
+            _installing = true;
+            Log.Info("Lade Version {0} ...", release.Version);
+            ShowBalloon("Lade Version " + release.Version + " ...");
+            var ui = System.Threading.Tasks.TaskScheduler.FromCurrentSynchronizationContext();
+            System.Threading.Tasks.Task.Factory.StartNew(() => Updater.Install(release))
+                .ContinueWith(t =>
+                {
+                    _installing = false;
+                    if (t.Exception != null)
+                    {
+                        string msg = t.Exception.GetBaseException().Message;
+                        Log.Error("Update fehlgeschlagen: {0}", msg);
+                        MessageBox.Show(msg, "Update", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                        return;
+                    }
+                    Log.Info("Update wird installiert - Monitor Dimmer startet gleich neu.");
+                    ExitThread();
+                }, ui);
         }
 
         /// <summary>Autostart-Aufgabe nach dem Verschieben des Programmordners im Hintergrund auf die neue exe umstellen.</summary>
@@ -980,12 +1209,14 @@ namespace MonitorDimmer
 
         private void Cleanup()
         {
+            try { if (_main != null && !_main.IsDisposed) _main.Close(); } catch { } // offene Seite verwerfen
             SystemEvents.SessionEnding -= OnSessionEnding;
             try { _configWatcher.EnableRaisingEvents = false; _configWatcher.Dispose(); } catch { }
             _undimTimer.Stop();
             _reapplyTimer.Stop();
             _reloadTimer.Stop();
             _gameExitTimer.Stop();
+            _updateTimer.Stop();
             ForgetGame();
             if (_watcher != null) _watcher.Dispose();
             if (_window != null) _window.Dispose();

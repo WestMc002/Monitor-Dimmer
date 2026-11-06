@@ -5,6 +5,19 @@ Aktuelle Version: siehe Info-Fenster (Klick auf die Versionsnummer) bzw.
 Eigenschaften > Details der EXE. Vorgänger: Monitor Dimmer 1.3.2017.0120
 
 Versionen:
+  2.59.2026.1106 Ein Fenster statt einzelner Fenster: Monitore, Spieleliste,
+                 Tastenkürzel und Aktionen als Seiten mit Navigation links,
+                 einklappbar, mit "Einstellungen" und "Beenden"; Doppelklick
+                 auf das Tray-Symbol öffnet die Spieleliste; Spalten der
+                 Spieleliste passen sich der Breite an; Update-Prüfung und
+                 Selbst-Update über GitHub (wie bei Fensterpositionen
+                 wiederherstellen);
+                 Info-Fenster mit Update-Stand, Knopf "Jetzt prüfen"/
+                 "Aktualisieren" und Schalter "Automatisch prüfen";
+                 Spieleliste übernimmt Änderungen erst mit "Speichern"
+                 ("Abbrechen" verwirft); Versions-Plakette mit einheitlichem
+                 Abstand und Größe; dunkle Titelleiste bleibt auch erhalten,
+                 wenn Windows ein Fenster neu anlegt
   2.48.2026.1101 Neues Programm-Icon (Mond als echte Sichel), Screenshots
                  aktualisiert
   2.46.2026.1101 Alten Programmnamen aus Texten, Konfiguration und Programm
@@ -107,6 +120,19 @@ ERSTER START
 
 WAS IST NEU
 -----------
+- Ein Fenster für alles: Monitore, Spieleliste, Tastenkürzel und Aktionen
+  sind Seiten mit Navigation links. Die Einträge im Tray-Menü öffnen das
+  Fenster direkt auf der passenden Seite, ein Doppelklick auf das
+  Tray-Symbol mit der Spieleliste. Das Info-Fenster bleibt ein kleines
+  Fenster (Klick auf die Versionsnummer).
+  Die Navigation lässt sich mit ☰ ein- und ausklappen und mit der
+  Stecknadel anpinnen (gespeichert in Configurations\Fenster.ini). Unten
+  in der Navigation öffnet "Einstellungen" dieselben Einträge wie im
+  Tray-Menü (Konfiguration, Sicherungen, Protokoll, Programmordner, Info,
+  Mit Windows starten); "Beenden" beendet das Programm ganz. Speichern und Abbrechen
+  gelten je Seite; ein Wechsel über die Navigation und das Schließen des
+  Fensters verwerfen nicht gespeicherte Änderungen. Das Programm läuft nach
+  dem Schließen im Infobereich weiter.
 - Tray-Menü:
   * Modernes Menü im Windows-11-Stil (runde Ecken, Symbole, Status oben,
     folgt dem hellen/dunklen Windows-Design, zeigt die Tastenkürzel an)
@@ -118,7 +144,8 @@ WAS IST NEU
     jedem Monitor groß seine Handle-Nummer.
   * Spieleliste bearbeiten: je Profil alle Spiele mit Icon und Status
     (gefunden/fehlt), hinzufügen, entfernen, alle fehlenden entfernen,
-    in ein anderes Profil verschieben, Ordner öffnen
+    in ein anderes Profil verschieben, Ordner öffnen; übernommen wird erst
+    mit "Speichern", "Abbrechen" verwirft die Änderungen
   * "Neue / fehlende suchen...": durchsucht C:\Spiele samt Unterordnern
     (auch steamapps\common) in einem Durchgang:
     - fehlende Programme werden nach Dateinamen gesucht (neuer Pfad),
@@ -135,7 +162,8 @@ WAS IST NEU
   * Die Liste wird immer alphabetisch sortiert, ohne Doppelte und einheitlich
     eingerückt gespeichert. Vorher wird eine Sicherung angelegt (siehe unten).
   * Konfiguration bearbeiten/neu laden, Protokoll öffnen
-  * Doppelklick auf das Symbol = Pause ein/aus
+  * Doppelklick auf das Symbol öffnet das Fenster mit der Spieleliste;
+    Pause ein/aus über das Menü bzw. Tastenkürzel
 - Dunkles Design: Menü und alle Fenster richten sich automatisch nach Windows
   (Einstellungen > Personalisierung > Farben). Das Menü folgt dem
   Windows-Modus, die Fenster dem App-Modus. Gilt ab dem nächsten Öffnen.
@@ -248,7 +276,7 @@ WAS IST NEU
 - Protokoll wird bei 5 MB nach Default.old.log verschoben.
 - Fußzeile in allen Fenstern mit GS-Logo (Resources\GS-Logo.png), Name und
   Website; ein Klick darauf öffnet www.westmc002.de.
-- Info-Fenster: Klick auf die blaue Versionsnummer oben in einem Fenster oder
+- Info-Fenster: Klick auf die blaue Versionsnummer oben auf einer Seite oder
   Tray-Menü > Einstellungen > "Info über Monitor Dimmer". Zeigt Logo,
   Version, Entwickler, Erstelldatum, Farbschema und Programmordner, dazu
   Knöpfe für die Anleitung (Liesmich.txt) und die Konfigurations-Sicherungen.
@@ -258,6 +286,22 @@ WAS IST NEU
   UnhandledExceptions ohne Unterordner "MonitorDimmer". Beim ersten Start
   werden die Dateien automatisch umgezogen.
 - Pfad "3D M?hle" in der Konfiguration korrigiert (Umlaut war verloren).
+- Updates: Kurz nach dem Start (und bei laufendem Programm höchstens alle
+  20 Stunden) fragt das Programm bei GitHub nach einer neueren Version
+  (github.com/WestMc002/Monitor-Dimmer). Übertragen wird nur die Abfrage.
+  Gibt es eine, erscheint einmalig ein Hinweis (Klick darauf startet das
+  Update), oben im Tray-Menü steht fett "Update auf ... installieren", und
+  im Fenster erscheint oben eine Hinweisleiste mit "Jetzt aktualisieren",
+  "Release-Seite" und "Später".
+  Installieren: Das Programm lädt die ZIP-Datei, beendet sich (die Monitore
+  werden dabei entdimmt), ersetzt "Monitor Dimmer.exe" und Liesmich.txt und
+  startet neu. Konfiguration, Spieleliste und Protokolle bleiben erhalten.
+  Ohne Schreibrechte im Programmordner fragt Windows nach Adminrechten.
+  Im Projektordner (mit Erstellen.bat) wird nicht automatisch aktualisiert,
+  dort öffnet sich stattdessen die Release-Seite.
+  Info-Fenster > Updates: Stand mit Datum der letzten Prüfung, Knopf
+  "Jetzt prüfen" (bei neuer Version "Aktualisieren") und Schalter
+  "Automatisch prüfen" (gespeichert in Configurations\Update.ini).
 
 
 HINWEIS ZU DEN SKRIPTEN
