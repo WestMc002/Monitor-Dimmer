@@ -5,6 +5,7 @@ Aktuelle Version: siehe Info-Fenster (Klick auf die Versionsnummer) bzw.
 Eigenschaften > Details der EXE. Vorgänger: Monitor Dimmer 1.3.2017.0120
 
 Versionen:
+  2.62.2026.1109 Tooltips im Programmdesign (hell/dunkel, passend zu den Karten)
   2.61.2026.1109 Einstellungen, Sicherungen und Protokolle liegen jetzt unter
                  %LOCALAPPDATA%\Monitor Dimmer statt neben der EXE (beim
                  ersten Start automatisch verschoben); Programm kann damit

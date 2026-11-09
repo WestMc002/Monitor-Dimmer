@@ -535,7 +535,7 @@ namespace MonitorDimmer
     {
         public static void Fit(Control row, FlowLayoutPanel left, Control right)
         {
-            var tip = new ToolTip();
+            var tip = new ModernToolTip();
             var texts = new Dictionary<ModernButton, string>();
             foreach (var b in left.Controls.OfType<ModernButton>())
                 if (!string.IsNullOrEmpty(b.Text)) texts[b] = b.Text;

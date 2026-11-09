@@ -135,7 +135,7 @@ namespace MonitorDimmer
             _down.Click += (s, e) => MoveSelected(1);
             _test = new ModernButton("Jetzt testen", '', false, k);
             _test.Click += (s, e) => TestActive();
-            var tip = new ToolTip();
+            var tip = new ModernToolTip();
             tip.SetToolTip(_up, "Nach oben schieben");
             tip.SetToolTip(_down, "Nach unten schieben");
             tip.SetToolTip(_test, "Führt die markierte Liste sofort aus");
@@ -548,7 +548,7 @@ namespace MonitorDimmer
             _browse = new ModernButton("", '', false, k);
             _browse.Location = new Point(x + w - _browse.Width, y - S(6));
             _browse.Click += (s, e) => Browse();
-            new ToolTip().SetToolTip(_browse, "Datei auswählen");
+            new ModernToolTip().SetToolTip(_browse, "Datei auswählen");
             Controls.Add(_browse);
             _value = new ComboBox { DropDownStyle = ComboBoxStyle.DropDown, Location = new Point(x + lw, y), Width = w - lw, AutoCompleteMode = AutoCompleteMode.SuggestAppend, AutoCompleteSource = AutoCompleteSource.ListItems, MaxDropDownItems = 20 };
             Controls.Add(_value);

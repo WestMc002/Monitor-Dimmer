@@ -79,7 +79,7 @@ namespace MonitorDimmer
             _navPin.Click += (s, e) => SetNavPinned(!NavPinned);
             _nav.Controls.Add(_navMenu);
             _nav.Controls.Add(_navPin);
-            var tip = new ToolTip();
+            var tip = new ModernToolTip();
             tip.SetToolTip(_navMenu, "Navigation aus- bzw. einklappen");
             _navTip = tip;
             foreach (var p in pages)

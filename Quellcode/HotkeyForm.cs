@@ -189,7 +189,7 @@ namespace MonitorDimmer
             _up.Click += (s, e) => MoveSelected(-1);
             _down = new ModernButton("", '\uE70D', false, k);
             _down.Click += (s, e) => MoveSelected(1);
-            var tip = new ToolTip();
+            var tip = new ModernToolTip();
             tip.SetToolTip(_up, "Nach oben schieben");
             tip.SetToolTip(_down, "Nach unten schieben");
             left.Controls.AddRange(new Control[] { add, _edit, _remove, _up, _down });
@@ -457,7 +457,7 @@ namespace MonitorDimmer
                     TextRenderer.DrawText(g, "?", f, new Rectangle(0, 0, _help.Width, _help.Height), hover ? (Accent.Luminance(blue) > 0.5 ? Color.FromArgb(20, 20, 20) : Color.White) : blue,
                         TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding | TextFormatFlags.SingleLine);
             };
-            _tip = new ToolTip { AutoPopDelay = 30000, InitialDelay = 150, ReshowDelay = 100, ToolTipTitle = "Was passiert?" };
+            _tip = new ModernToolTip { AutoPopDelay = 30000, InitialDelay = 150, ReshowDelay = 100, ToolTipTitle = "Was passiert?" };
             Controls.Add(_help);
             y += S(32);
 
