@@ -730,8 +730,8 @@ namespace MonitorDimmer
             var games = Item("Spieleliste bearbeiten...", MenuHelper.Game, ShowGameList);
             games.ShortcutKeyDisplayString = HotkeyText("ShowGameList", null);
             menu.Items.Add(games);
-            menu.Items.Add(Item("Tastenkürzel...", MenuHelper.Keyboard, ShowHotkeys));
             menu.Items.Add(Item("Aktionen...", MenuHelper.Actions, ShowActions));
+            menu.Items.Add(Item("Tastenkürzel...", MenuHelper.Keyboard, ShowHotkeys));
             menu.Items.Add(new ToolStripSeparator());
 
             // ---------- Einstellungen ----------
@@ -903,7 +903,7 @@ namespace MonitorDimmer
             if (_pageMonitors == null) CreatePages();
             if (_main == null || _main.IsDisposed)
             {
-                _main = new MainWindow(new List<PageDef> { _pageMonitors, _pageGames, _pageHotkeys, _pageActions },
+                _main = new MainWindow(new List<PageDef> { _pageMonitors, _pageGames, _pageActions, _pageHotkeys },
                     Icon.ExtractAssociatedIcon(Application.ExecutablePath),
                     ShowSettingsMenu,
                     () => _sync.Post(_ => ExitThread(), null)); // "Beenden" erst nach dem Klick ausführen

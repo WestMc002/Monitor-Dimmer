@@ -96,7 +96,7 @@ namespace MonitorDimmer
                         var actions = new PageDef { Text = "Aktionen", Glyph = MenuHelper.Actions, Create = () => new ActionsForm(cfg, temp, dimmed.Name, icon) };
                         var hotkeys = new PageDef { Text = "Tastenkürzel", Glyph = MenuHelper.Keyboard, Create = () => new HotkeyForm(cfg, k => "", icon) };
                         var monitors = new PageDef { Text = "Monitore", Glyph = MenuHelper.Monitor, Create = () => new MonitorForm(manager, () => cfg, () => dimmed, icon) };
-                        using (var main = new MainWindow(new List<PageDef> { monitors, games, hotkeys, actions }, icon, c => { }, () => { }))
+                        using (var main = new MainWindow(new List<PageDef> { monitors, games, actions, hotkeys }, icon, c => { }, () => { }))
                         {
                             main.ShowInTaskbar = false;
                             main.Show();

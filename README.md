@@ -33,7 +33,7 @@ Die Screenshots zeigen erfundene Beispieldaten. Sie entstehen automatisch beim E
 - **Aktionen** – beim Aktivieren und Deaktivieren eines Profils: Programme beenden und wieder starten, Dienste stoppen und starten, Energiesparplan, Standard-Audiogerät, geplante Aufgaben, Befehle; Prüfung auf fehlende Programme
 - **Tastenkürzel** – global, frei belegbar (Pause, Automatik, Profil erzwingen, erneut anwenden …)
 - **Monitore** – grafische Übersicht mit Anordnung und aktuellen Werten
-- **Ein Fenster** – Monitore, Spieleliste, Tastenkürzel und Aktionen als Seiten mit Navigation (Doppelklick auf das Tray-Symbol); Speichern und Abbrechen je Seite
+- **Ein Fenster** – Monitore, Spieleliste, Aktionen und Tastenkürzel als Seiten mit Navigation (Doppelklick auf das Tray-Symbol); Speichern und Abbrechen je Seite
 - **Sicherheit** – beim Beenden, Abmelden und nach Abstürzen werden die Monitore entdimmt; die Konfiguration wird vor jedem Speichern versioniert gesichert
 - **Autostart** – mit Adminrechten über die Aufgabenplanung, ohne UAC-Abfrage bei jeder Anmeldung
 - **Updates** – sieht höchstens einmal am Tag unter Releases nach einer neuen Version; Installation mit einem Klick im Tray-Menü (Konfiguration bleibt erhalten, abschaltbar im Info-Fenster)

@@ -5,6 +5,7 @@ Aktuelle Version: siehe Info-Fenster (Klick auf die Versionsnummer) bzw.
 Eigenschaften > Details der EXE. Vorgänger: Monitor Dimmer 1.3.2017.0120
 
 Versionen:
+  2.64.2026.1109 Navigation und Tray-Menü: Aktionen vor Tastenkürzel
   2.62.2026.1109 Tooltips im Programmdesign (hell/dunkel, passend zu den Karten)
   2.61.2026.1109 Einstellungen, Sicherungen und Protokolle liegen jetzt unter
                  %LOCALAPPDATA%\Monitor Dimmer statt neben der EXE (beim
@@ -138,7 +139,7 @@ ERSTER START
 
 WAS IST NEU
 -----------
-- Ein Fenster für alles: Monitore, Spieleliste, Tastenkürzel und Aktionen
+- Ein Fenster für alles: Monitore, Spieleliste, Aktionen und Tastenkürzel
   sind Seiten mit Navigation links. Die Einträge im Tray-Menü öffnen das
   Fenster direkt auf der passenden Seite, ein Doppelklick auf das
   Tray-Symbol mit der Spieleliste. Das Info-Fenster bleibt ein kleines
