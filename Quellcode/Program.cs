@@ -61,7 +61,8 @@ namespace MonitorDimmer
                 }
 
                 var migrated = MigrateLayout(_baseDir);
-                Log.Init(Path.Combine(_baseDir, "TraceLogs", configName + ".log"));
+                migrated.AddRange(AppData.MoveFromProgramFolder(_baseDir));
+                Log.Init(Path.Combine(AppData.TraceLogs, configName + ".log"));
                 foreach (var m in migrated) Log.Info(m);
                 Application.EnableVisualStyles();
                 Application.SetCompatibleTextRenderingDefault(false);
@@ -71,7 +72,7 @@ namespace MonitorDimmer
 
                 try
                 {
-                    _app = new TrayApp(_baseDir, configName);
+                    _app = new TrayApp(_baseDir, AppData.Dir, configName);
                 }
                 catch (Exception ex)
                 {
@@ -135,12 +136,73 @@ namespace MonitorDimmer
         {
             try
             {
-                string dir = Path.Combine(_baseDir, "UnhandledExceptions");
+                string dir = AppData.UnhandledExceptions;
                 Directory.CreateDirectory(dir);
                 File.WriteAllText(Path.Combine(dir, DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss") + ".txt"),
                     ex == null ? "Unbekannter Fehler" : ex.ToString());
             }
             catch { }
+        }
+    }
+
+    /// <summary>
+    /// Ablage der Laufzeitdaten unter %LOCALAPPDATA%\Monitor Dimmer (wie Wake on LAN): Configurations (Konfiguration,
+    /// Sicherungen, Update.ini, Fenster.ini, Beendete Programme.txt), TraceLogs und UnhandledExceptions.
+    /// Bis Version 2.59 lagen diese Ordner neben der EXE; sie werden beim ersten Start einmalig hierher verschoben.
+    /// </summary>
+    internal static class AppData
+    {
+        public static string Dir
+        {
+            get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Monitor Dimmer"); }
+        }
+
+        public static string Configurations { get { return Path.Combine(Dir, "Configurations"); } }
+        public static string TraceLogs { get { return Path.Combine(Dir, "TraceLogs"); } }
+        public static string UnhandledExceptions { get { return Path.Combine(Dir, "UnhandledExceptions"); } }
+
+        /// <summary>
+        /// Ordner Configurations, TraceLogs und UnhandledExceptions aus dem Programmordner hierher verschieben.
+        /// Vorhandene Dateien am neuen Ort werden nie überschrieben; was nicht verschoben werden kann, bleibt liegen.
+        /// </summary>
+        public static List<string> MoveFromProgramFolder(string baseDir)
+        {
+            var messages = new List<string>();
+            foreach (var top in new[] { "Configurations", "TraceLogs", "UnhandledExceptions" })
+            {
+                string oldDir = Path.Combine(baseDir, top);
+                if (!Directory.Exists(oldDir)) continue;
+                string newDir = Path.Combine(Dir, top);
+                int moved = 0, skipped = 0;
+                MoveTree(oldDir, newDir, ref moved, ref skipped, messages);
+                messages.Add(string.Format("Datenordner: {0} Dateien von {1}\\{2} nach {3} verschoben{4}",
+                    moved, baseDir, top, newDir, skipped > 0 ? ", " + skipped + " bleiben dort (Datei existiert schon am neuen Ort oder ist gesperrt)" : ""));
+            }
+            return messages;
+        }
+
+        private static void MoveTree(string from, string to, ref int moved, ref int skipped, List<string> messages)
+        {
+            try { Directory.CreateDirectory(to); }
+            catch (Exception ex) { messages.Add("Datenordner nicht anlegbar: " + to + " (" + ex.Message + ")"); return; }
+            foreach (var file in Directory.GetFiles(from))
+            {
+                string target = Path.Combine(to, Path.GetFileName(file));
+                try
+                {
+                    if (File.Exists(target)) { skipped++; continue; }
+                    File.Move(file, target);
+                    moved++;
+                }
+                catch (Exception ex)
+                {
+                    skipped++;
+                    messages.Add("Umzug fehlgeschlagen: " + file + " (" + ex.Message + ")");
+                }
+            }
+            foreach (var dir in Directory.GetDirectories(from))
+                MoveTree(dir, Path.Combine(to, Path.GetFileName(dir)), ref moved, ref skipped, messages);
+            try { if (Directory.GetFileSystemEntries(from).Length == 0) Directory.Delete(from); } catch { }
         }
     }
 

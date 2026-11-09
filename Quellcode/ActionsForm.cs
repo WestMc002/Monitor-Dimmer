@@ -145,11 +145,12 @@ namespace MonitorDimmer
             left.Controls.AddRange(new Control[] { add, _edit, _remove, _up, _down, _copy, _test });
 
             var right = new FlowLayoutPanel { Dock = DockStyle.Right, AutoSize = true, WrapContents = false, FlowDirection = FlowDirection.RightToLeft, BackColor = Ui.Back, Padding = new Padding(0, S(16), 0, 0) };
-            var cancel = new ModernButton("Abbrechen", '\0', false, k) { DialogResult = DialogResult.Cancel, Margin = new Padding(0) };
-            var save = new ModernButton("Speichern", '', true, k);
+            // „Abbrechen“ links, „Speichern“ ganz rechts (globale Vorgabe)
+            var cancel = new ModernButton("Abbrechen", '\0', false, k) { DialogResult = DialogResult.Cancel };
+            var save = new ModernButton("Speichern", '', true, k) { Margin = new Padding(0) };
             save.Click += (s, e) => { DialogResult = DialogResult.OK; Close(); };
-            right.Controls.Add(cancel);
             right.Controls.Add(save);
+            right.Controls.Add(cancel);
             actions.Controls.Add(left);
             actions.Controls.Add(right);
             ButtonRow.Fit(actions, left, right); // schmal: Knöpfe links nur mit Symbol, nichts liegt unter "Speichern"
@@ -483,7 +484,7 @@ namespace MonitorDimmer
             string profileName = Current != null ? Current.Source.Name : null;
             string which = _active == _applied ? "\"Beim Aktivieren\"" : "\"Beim Deaktivieren\"";
             if (MessageBox.Show(this, "Die Liste " + which + " jetzt ausführen?\n\nProgramme und Dienste werden dabei wirklich beendet bzw. gestartet.",
-                    "Jetzt testen", MessageBoxButtons.OKCancel, MessageBoxIcon.Question) != DialogResult.OK) return;
+                    "Jetzt testen", MessageBoxButtons.OKCancel, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2) != DialogResult.OK) return; // riskant: Abbrechen vorausgewählt
             _test.Enabled = false;
             Cursor = Cursors.AppStarting;
             var t = new Thread(() =>
@@ -566,10 +567,10 @@ namespace MonitorDimmer
             Controls.Add(_error);
 
             var cancel = new ModernButton("Abbrechen", '\0', false, k) { DialogResult = DialogResult.Cancel };
-            var ok = new ModernButton("OK", '', true, k);
+            var ok = new ModernButton("Übernehmen", '', true, k); // Unterdialog speichert nichts selbst
             int by = ClientSize.Height - S(18) - cancel.Height;
-            cancel.Location = new Point(x + w - cancel.Width, by);
-            ok.Location = new Point(cancel.Left - S(10) - ok.Width, by);
+            ok.Location = new Point(x + w - ok.Width, by);
+            cancel.Location = new Point(ok.Left - S(10) - cancel.Width, by);
             ok.Click += (s, e) => Accept();
             Controls.Add(ok);
             Controls.Add(cancel);
@@ -585,6 +586,14 @@ namespace MonitorDimmer
         }
 
         private int S(float v) { return (int)Math.Round(v * k); }
+
+        /// <summary>Feste Größe mit normalem Rahmen (globale Vorgabe Fensterrahmen).</summary>
+        protected override void OnLoad(EventArgs e)
+        {
+            base.OnLoad(e);
+            MinimumSize = Size;
+            MaximumSize = Size;
+        }
 
         protected override void WndProc(ref Message m)
         {

@@ -702,7 +702,7 @@ namespace MonitorDimmer
 
         private static string FilePath
         {
-            get { return System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Configurations", "Beendete Programme.txt"); }
+            get { return System.IO.Path.Combine(AppData.Configurations, "Beendete Programme.txt"); }
         }
 
         private static List<Entry> List

@@ -195,13 +195,14 @@ namespace MonitorDimmer
             left.Controls.AddRange(new Control[] { add, _edit, _remove, _up, _down });
 
             var right = new FlowLayoutPanel { Dock = DockStyle.Right, AutoSize = true, WrapContents = false, FlowDirection = FlowDirection.RightToLeft, BackColor = CBack, Padding = new Padding(0, S(16), 0, 0) };
-            var cancel = new ModernButton("Abbrechen", '\0', false, k) { DialogResult = DialogResult.Cancel, Margin = new Padding(0) };
-            var save = new ModernButton("Speichern", '\uE74E', true, k);
+            // „Abbrechen“ links, „Speichern“ ganz rechts (globale Vorgabe)
+            var cancel = new ModernButton("Abbrechen", '\0', false, k) { DialogResult = DialogResult.Cancel };
+            var save = new ModernButton("Speichern", '\uE74E', true, k) { Margin = new Padding(0) };
             save.Click += (s, e) => { if (Validate()) { DialogResult = DialogResult.OK; Close(); } };
             // links neben den Knöpfen: rote Fehlerzeile, das Fenster bleibt dann offen
             _error = new Label { AutoSize = true, ForeColor = Theme.Map(Color.FromArgb(196, 43, 28)), BackColor = CBack, MinimumSize = new Size(0, save.Height), TextAlign = ContentAlignment.MiddleRight, Margin = new Padding(0, 0, S(12), 0) };
-            right.Controls.Add(cancel);
             right.Controls.Add(save);
+            right.Controls.Add(cancel);
             right.Controls.Add(_error);
             actions.Controls.Add(left);
             actions.Controls.Add(right);
@@ -478,10 +479,10 @@ namespace MonitorDimmer
             Controls.Add(_hint);
 
             var cancel = new ModernButton("Abbrechen", '\0', false, k) { DialogResult = DialogResult.Cancel };
-            var ok = new ModernButton("OK", '\uE73E', true, k);
+            var ok = new ModernButton("Übernehmen", '\uE73E', true, k); // Unterdialog speichert nichts selbst
             int by = ClientSize.Height - S(16) - cancel.Height;
-            cancel.Location = new Point(x + w - cancel.Width, by);
-            ok.Location = new Point(cancel.Left - S(10) - ok.Width, by);
+            ok.Location = new Point(x + w - ok.Width, by);
+            cancel.Location = new Point(ok.Left - S(10) - cancel.Width, by);
             ok.Click += (s, e) => Accept();
             Controls.Add(ok);
             Controls.Add(cancel);
@@ -495,6 +496,14 @@ namespace MonitorDimmer
         }
 
         private int S(float v) { return (int)Math.Round(v * k); }
+
+        /// <summary>Feste Größe mit normalem Rahmen (globale Vorgabe Fensterrahmen).</summary>
+        protected override void OnLoad(EventArgs e)
+        {
+            base.OnLoad(e);
+            MinimumSize = Size;
+            MaximumSize = Size;
+        }
 
         protected override void WndProc(ref Message m)
         {

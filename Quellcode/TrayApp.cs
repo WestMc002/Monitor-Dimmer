@@ -20,6 +20,7 @@ namespace MonitorDimmer
         private readonly string _baseDir;
         private readonly string _configPath;
         private readonly string _resourcesDir;
+        private readonly string _dataDir = ""; // Laufzeitdaten (%LOCALAPPDATA%\Monitor Dimmer)
 
         private AppConfig _config;
         private readonly MonitorManager _monitors;
@@ -83,10 +84,11 @@ namespace MonitorDimmer
             return menu;
         }
 
-        public TrayApp(string baseDir, string configName)
+        public TrayApp(string baseDir, string dataDir, string configName)
         {
             _baseDir = baseDir;
-            _configPath = Path.Combine(baseDir, "Configurations", configName + ".xml");
+            _dataDir = dataDir;
+            _configPath = Path.Combine(dataDir, "Configurations", configName + ".xml"); // %LOCALAPPDATA%\Monitor Dimmer
             _resourcesDir = Path.Combine(baseDir, "Resources");
 
             Log.Info("==== Start Monitor Dimmer {0} (Benutzer {1}\\{2}, {3}) ====",
@@ -739,6 +741,7 @@ namespace MonitorDimmer
             settings.DropDownItems.Add(Item("Sicherungen öffnen", MenuHelper.History, OpenBackups));
             settings.DropDownItems.Add(Item("Protokoll öffnen", MenuHelper.Log, () => OpenFile(Log.FilePath, true)));
             settings.DropDownItems.Add(Item("Programmordner öffnen", MenuHelper.Folder, () => OpenFile(_baseDir, false)));
+            settings.DropDownItems.Add(Item("Datenordner öffnen", MenuHelper.Folder, () => OpenFile(_dataDir, false)));
             settings.DropDownItems.Add(Item("Info über Monitor Dimmer", MenuHelper.Info, ShowInfo));
             settings.DropDownItems.Add(new ToolStripSeparator());
             bool autoOn = Autostart.IsEnabled();
@@ -927,6 +930,7 @@ namespace MonitorDimmer
             menu.Items.Add(mb.Item("Sicherungen öffnen", MenuHelper.History, OpenBackups));
             menu.Items.Add(mb.Item("Protokoll öffnen", MenuHelper.Log, () => OpenFile(Log.FilePath, true)));
             menu.Items.Add(mb.Item("Programmordner öffnen", MenuHelper.Folder, () => OpenFile(_baseDir, false)));
+            menu.Items.Add(mb.Item("Datenordner öffnen", MenuHelper.Folder, () => OpenFile(_dataDir, false)));
             menu.Items.Add(mb.Item("Info über Monitor Dimmer", MenuHelper.Info, ShowInfo));
             menu.Items.Add(new ToolStripSeparator());
             bool autoOn = Autostart.IsEnabled();

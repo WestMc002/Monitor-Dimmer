@@ -269,6 +269,9 @@ namespace MonitorDimmer
             Text = "Monitor Dimmer - Neue und fehlende Spiele";
             if (icon != null) Icon = icon;
             StartPosition = FormStartPosition.CenterParent;
+            FormBorderStyle = FormBorderStyle.Sizable; // Dialog mit veränderbarer Größe: normaler Rahmen, ohne Minimieren
+            MinimizeBox = false;
+            ShowInTaskbar = false;
             BackColor = Color.FromArgb(243, 243, 243);
             Font = new Font("Segoe UI", 9f);
             using (var g = CreateGraphics()) k = g.DpiX / 96f;
@@ -383,8 +386,8 @@ namespace MonitorDimmer
             var actions = new Panel { Dock = DockStyle.Bottom, Height = S(72), BackColor = Color.FromArgb(243, 243, 243) };
             var left = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false, BackColor = Color.FromArgb(243, 243, 243), Padding = new Padding(0, S(16), 0, 0) };
             var buttons = new FlowLayoutPanel { Dock = DockStyle.Right, AutoSize = true, WrapContents = false, FlowDirection = FlowDirection.RightToLeft, BackColor = Color.FromArgb(243, 243, 243), Padding = new Padding(0, S(16), 0, 0) };
-            var cancel = new ModernButton("Abbrechen", '\0', false, k) { DialogResult = DialogResult.Cancel, Margin = new Padding(0) };
-            var ok = new ModernButton("Übernehmen", '\uE73E', true, k);
+            var cancel = new ModernButton("Abbrechen", '\0', false, k) { DialogResult = DialogResult.Cancel };
+            var ok = new ModernButton("Übernehmen", '\uE73E', true, k) { Margin = new Padding(0) };
             ok.Click += (s, e) => { Collect(); DialogResult = DialogResult.OK; Close(); };
             _allNew = new ModernButton("Alle neuen anhaken", '\uE73A', false, k);
             var allNew = _allNew;
@@ -407,8 +410,8 @@ namespace MonitorDimmer
                 foreach (var gridRow in rows) gridRow.Cells[0].Value = check;
                 UpdateToggle();
             };
+            buttons.Controls.Add(ok); // „Abbrechen“ links, „Übernehmen“ ganz rechts
             buttons.Controls.Add(cancel);
-            buttons.Controls.Add(ok);
             left.Controls.Add(allNew);
             actions.Controls.Add(left);
             actions.Controls.Add(buttons);

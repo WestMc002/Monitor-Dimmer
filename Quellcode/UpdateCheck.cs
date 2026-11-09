@@ -153,9 +153,9 @@ namespace MonitorDimmer
             try { return File.Exists(LogFile) ? File.ReadAllText(LogFile, Encoding.UTF8).Trim() : null; } catch { return null; }
         }
 
-        // ---------- Einstellungen: Configurations\Update.ini (auto = automatisch prüfen, last = letzte Prüfung) ----------
+        // ---------- Einstellungen: %LOCALAPPDATA%\Monitor Dimmer\Configurations\Update.ini (auto, last) ----------
 
-        private static string SettingsFile { get { return Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Configurations", "Update.ini"); } }
+        private static string SettingsFile { get { return Path.Combine(AppData.Configurations, "Update.ini"); } }
 
         private static string Read(string key)
         {

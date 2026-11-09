@@ -720,7 +720,7 @@ namespace MonitorDimmer
             var backups = new ModernButton("Sicherungen", MenuHelper.Folder, false, k);
             backups.Click += (s, e) =>
             {
-                string dir = Path.Combine(Application.StartupPath, "Configurations", "Sicherungen");
+                string dir = Path.Combine(AppData.Configurations, "Sicherungen");
                 try { Directory.CreateDirectory(dir); } catch { }
                 Open(dir, false);
             };
@@ -755,6 +755,14 @@ namespace MonitorDimmer
         }
 
         private int S(float v) { return (int)Math.Round(v * k); }
+
+        /// <summary>Feste Größe mit normalem Rahmen (globale Vorgabe Fensterrahmen).</summary>
+        protected override void OnLoad(EventArgs e)
+        {
+            base.OnLoad(e);
+            MinimumSize = Size;
+            MaximumSize = Size;
+        }
 
         protected override void WndProc(ref Message m)
         {

@@ -41,8 +41,8 @@ Die Screenshots zeigen erfundene Beispieldaten. Sie entstehen automatisch beim E
 ## Installation
 
 1. Unter [Releases](../../releases) die neueste `Monitor-Dimmer-<Version>.zip` herunterladen.
-2. `Monitor Dimmer.exe` (und `Liesmich.txt`) in einen eigenen Ordner mit Schreibrechten entpacken, z. B. `C:\Tools\Monitor Dimmer` (nicht unter `C:\Program Files`, weil das Programm seine Daten neben der EXE speichert).
-3. Starten. Beim ersten Start entstehen daneben die Ordner `Configurations` (Einstellungen) und `TraceLogs` (Protokoll).
+2. `Monitor Dimmer.exe` (und `Liesmich.txt`) in einen eigenen Ordner entpacken, z. B. `C:\Tools\Monitor Dimmer` oder `C:\Program Files\Monitor Dimmer`.
+3. Starten. Einstellungen und Protokoll legt das Programm unter `%LOCALAPPDATA%\Monitor Dimmer` an (`Configurations` und `TraceLogs`).
 4. Im Tray-Menü unter „Monitore anzeigen …“ prüfen, welche Nummer zu welchem Monitor gehört, und die Profile anpassen.
 
 Voraussetzungen: Windows 10 oder 11 (.NET Framework 4 ist dort vorhanden) und Monitore, die DDC/CI unterstützen (meist im Monitormenü einschaltbar).
@@ -63,7 +63,7 @@ Die Version (Haupt.Neben.Jahr.MonatTag) wird dabei automatisch hochgezählt, die
 | `Erstellen.bat` | Build-Skript |
 | `Liesmich.txt` | Ausführliche Beschreibung und Versionsgeschichte |
 
-Zur Laufzeit legt das Programm neben der EXE `Configurations\` (Einstellungen und deren Sicherungen) und `TraceLogs\` (Protokoll) an.
+Zur Laufzeit legt das Programm unter `%LOCALAPPDATA%\Monitor Dimmer` die Ordner `Configurations\` (Einstellungen und deren Sicherungen) und `TraceLogs\` (Protokoll) an. Bis Version 2.59 lagen sie neben der EXE; sie werden beim ersten Start automatisch verschoben.
 
 ## Lizenz
 

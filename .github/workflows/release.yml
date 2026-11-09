@@ -67,8 +67,8 @@ jobs:
               '',
               '## Installation',
               '',
-              "1. ``Monitor-Dimmer-$ver.zip`` herunterladen und ``Monitor Dimmer.exe`` in einen eigenen Ordner mit Schreibrechten entpacken, z. B. ``C:\Tools\Monitor Dimmer`` (nicht unter ``C:\Program Files`` – das Programm speichert seine Daten neben der EXE).",
-              '2. Starten. Beim ersten Start werden die Ordner `Configurations` und `TraceLogs` neben der EXE angelegt.',
+              "1. ``Monitor-Dimmer-$ver.zip`` herunterladen und ``Monitor Dimmer.exe`` in einen eigenen Ordner mit Schreibrechten entpacken, z. B. ``C:\Tools\Monitor Dimmer``.",
+              '2. Starten. Einstellungen und Protokoll legt das Programm unter `%LOCALAPPDATA%\Monitor Dimmer` an (bis Version 2.59 lagen sie neben der EXE und werden beim ersten Start dorthin verschoben).',
               '3. Spiele über das Symbol im Infobereich zur Spieleliste hinzufügen.',
               '',
               'Voraussetzung: Windows 10/11 mit .NET Framework 4 und Monitore mit DDC/CI. Ausführliche Beschreibung und Versionsgeschichte: `Liesmich.txt` im ZIP.'

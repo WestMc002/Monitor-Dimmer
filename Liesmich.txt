@@ -5,6 +5,15 @@ Aktuelle Version: siehe Info-Fenster (Klick auf die Versionsnummer) bzw.
 Eigenschaften > Details der EXE. Vorgänger: Monitor Dimmer 1.3.2017.0120
 
 Versionen:
+  2.61.2026.1109 Einstellungen, Sicherungen und Protokolle liegen jetzt unter
+                 %LOCALAPPDATA%\Monitor Dimmer statt neben der EXE (beim
+                 ersten Start automatisch verschoben); Programm kann damit
+                 auch unter C:\Program Files liegen; neu "Datenordner öffnen";
+                 Dialoge mit fester Größe lassen sich auch per Andocken nicht
+                 mehr verändern, Suche nach neuen Spielen ohne Minimieren;
+                 Meldungen und Rückfragen im Programmdesign (hell/dunkel)
+                 statt Windows-Meldungsfenster; "Abbrechen" links,
+                 "Speichern" rechts; Unterdialoge mit "Übernehmen"
   2.59.2026.1106 Ein Fenster statt einzelner Fenster: Monitore, Spieleliste,
                  Tastenkürzel und Aktionen als Seiten mit Navigation links,
                  einklappbar, mit "Einstellungen" und "Beenden"; Doppelklick
@@ -80,6 +89,14 @@ Versionen:
   1.3.2017.0120  Monitor Dimmer 1.3 (Vorgänger)
 
 Neuentwicklung des Monitor Dimmer 1.3 (2017) mit Erweiterungen.
+Datenordner: Alle Einstellungen und Protokolle liegen unter
+%LOCALAPPDATA%\Monitor Dimmer (Configurations mit Default.xml, Sicherungen,
+Update.ini, Fenster.ini und Beendete Programme.txt; TraceLogs;
+UnhandledExceptions). Öffnen über Einstellungen > "Datenordner öffnen".
+Bis Version 2.59 lagen diese Ordner neben der EXE; beim ersten Start einer
+neueren Version werden sie einmalig dorthin verschoben (vorhandene Dateien
+am neuen Ort werden nie überschrieben). Alle Pfade wie Configurations\...
+in dieser Liesmich beziehen sich auf den Datenordner.
 Die bisherige Konfiguration (Configurations\Default.xml) wird weiter gelesen.
 Fehlt sie, legt das Programm beim ersten Start eine Startkonfiguration an
 (eingebettet aus Resources\Default.xml).

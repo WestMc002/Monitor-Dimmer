@@ -165,11 +165,11 @@ namespace MonitorDimmer
             buttons.Controls.AddRange(new Control[] { add, remove, _moveButton, removeMissing, open });
             // Speichern (primär), rechts daneben Abbrechen; links davon die rote Fehlerzeile
             var right = new FlowLayoutPanel { Dock = DockStyle.Right, AutoSize = true, WrapContents = false, FlowDirection = FlowDirection.RightToLeft, BackColor = CBack, Padding = new Padding(0, S(16), 0, 0) };
-            var cancel = new ModernButton("Abbrechen", '\0', false, k) { Margin = new Padding(0) };
-            var saveButton = new ModernButton("Speichern", '\uE74E', true, k);
+            var cancel = new ModernButton("Abbrechen", '\0', false, k);
+            var saveButton = new ModernButton("Speichern", '\uE74E', true, k) { Margin = new Padding(0) };
             _error = new Label { AutoSize = true, ForeColor = CMissing, BackColor = CBack, MinimumSize = new Size(0, saveButton.Height), TextAlign = ContentAlignment.MiddleRight, Margin = new Padding(0, 0, S(12), 0) };
+            right.Controls.Add(saveButton); // „Abbrechen“ links, „Speichern“ ganz rechts
             right.Controls.Add(cancel);
-            right.Controls.Add(saveButton);
             right.Controls.Add(_error);
             cancel.Click += (s, e) => Close(); // verwirft alle Änderungen
             saveButton.Click += (s, e) => SaveAll();
@@ -523,7 +523,7 @@ namespace MonitorDimmer
             if (p == null || sel.Count == 0) return;
             string what = sel.Count == 1 ? "\"" + Path.GetFileName(sel[0]) + "\"" : sel.Count + " Einträge";
             if (MessageBox.Show(this, what + " aus \"" + p.Title + "\" entfernen?", Text,
-                    MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
+                    MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2) != DialogResult.Yes) return;
             var set = new HashSet<string>(sel, StringComparer.OrdinalIgnoreCase);
             Save(p.Name, CurrentPaths().Where(x => !set.Contains(x)).ToList());
         }
@@ -596,7 +596,7 @@ namespace MonitorDimmer
             if (missing.Count > 15) preview += "\r\n  ... und " + (missing.Count - 15) + " weitere";
             if (MessageBox.Show(this, missing.Count + " nicht gefundene Einträge aus \"" + p.Title + "\" entfernen?\r\n\r\n" + preview +
                     "\r\n\r\nTipp: Liegt ein Spiel nur auf einem gerade nicht angeschlossenen Laufwerk, besser behalten.",
-                    Text, MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
+                    Text, MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2) != DialogResult.Yes) return;
             var set = new HashSet<string>(missing, StringComparer.OrdinalIgnoreCase);
             Save(p.Name, CurrentPaths().Where(x => !set.Contains(x)).ToList());
         }

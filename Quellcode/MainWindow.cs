@@ -160,9 +160,9 @@ namespace MonitorDimmer
 
         private readonly ToolTip _navTip;
 
-        // ---------- Navigation angepinnt (Configurations\Fenster.ini, Standard: an) ----------
+        // ---------- Navigation angepinnt (Datenordner\Configurations\Fenster.ini, Standard: an) ----------
 
-        private static string WindowSettings { get { return System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Configurations", "Fenster.ini"); } }
+        private static string WindowSettings { get { return System.IO.Path.Combine(AppData.Configurations, "Fenster.ini"); } }
 
         private bool? _pinned;
 

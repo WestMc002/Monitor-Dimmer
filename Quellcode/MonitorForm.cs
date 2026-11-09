@@ -97,7 +97,7 @@ namespace MonitorDimmer
             right.Controls.Add(close);
             actions.Controls.Add(left);
             actions.Controls.Add(right);
-            var info = new InfoBanner("Die große Nummer entspricht Handle=\"...\" in der Konfiguration (Configurations\\Default.xml).\n" +
+            var info = new InfoBanner("Die große Nummer entspricht Handle=\"...\" in der Konfiguration (Datenordner\\Configurations\\Default.xml).\n" +
                 "Solange dieses Fenster offen ist, steht sie auch groß auf jedem Monitor. Ein Klick auf die Einblendung blendet sie aus.", k) { Dock = DockStyle.Top };
             _footer.Controls.Add(info);
             _footer.Controls.Add(actions);
