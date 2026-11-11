@@ -46,6 +46,8 @@ namespace MonitorDimmer
         private readonly Panel _nav, _navSpacer, _content;
         private readonly NavButton _navMenu, _navPin, _navSettings, _navQuit;
         private readonly Timer _navTimer = new Timer { Interval = 400 };
+        private readonly Timer _navHover = new Timer { Interval = 400 }; // nicht angepinnt: nach 400 ms über der Navigation ausklappen
+        private bool _menuOpen; // Menü „Extras“ offen: Navigation nicht einklappen
         private readonly SignatureFooter _footer;
         private readonly Panel _updateHost;  // Hinweisleiste oben, nur sichtbar bei neuer Version
         private readonly UpdateBar _updateBar;
@@ -61,7 +63,7 @@ namespace MonitorDimmer
         private readonly Dictionary<PageDef, Form> _views = new Dictionary<PageDef, Form>();
         private bool _force;  // Schließen ohne Rückfrage (Programmende bzw. schon bestätigt)
 
-        /// <param name="settings">"Einstellungen" unten in der Navigation: zeigt das Einstellungsmenü am Knopf (null = ausblenden)</param>
+        /// <param name="settings">"Extras" unten in der Navigation: zeigt das Menü am Knopf (null = ausblenden)</param>
         /// <param name="quit">"Beenden" unten in der Navigation: Programm ganz beenden (null = ausblenden)</param>
         public MainWindow(List<PageDef> pages, Icon icon, Action<Control> settings, Action quit)
         {
@@ -105,12 +107,13 @@ namespace MonitorDimmer
                 _nav.Controls.Add(b);
                 _buttons[p] = b;
             }
-            // unten wie bei Wake on LAN und Sync Pilot: Einstellungen (Zahnrad), darunter Beenden (Ein/Aus)
-            _navSettings = new NavButton("Einstellungen", MenuHelper.Settings, k) { Visible = settings != null };
+            // unten: Extras (Zahnrad; reines Einstellungsfenster, darum nicht „Einstellungen“), darunter Beenden (Ein/Aus)
+            _navSettings = new NavButton("Extras", MenuHelper.Settings, k) { Visible = settings != null };
             _navSettings.Click += (s, e) =>
             {
                 if (settings == null) return;
                 _navSettings.Selected = true; // ausgewählt, solange das Menü offen ist
+                _menuOpen = true;
                 settings(_navSettings);
             };
             _nav.Controls.Add(_navSettings);
@@ -119,10 +122,23 @@ namespace MonitorDimmer
             _navQuit.Click += (s, e) => { CloseNav(); if (quit != null) quit(); }; // die Rückfrage bei Änderungen stellt der Aufrufer (ConfirmDiscard)
             _nav.Controls.Add(_navQuit);
             _nav.Resize += (s, e) => LayoutNav();
+            // nicht angepinnt: verweilt die Maus 400 ms auf der eingeklappten Navigation, klappt sie aus (Referenz Dock Pilot)
+            EventHandler hoverStart = (s, e) => { if (!NavPinned && !_navOpen) { _navHover.Stop(); _navHover.Start(); } };
+            _nav.MouseEnter += hoverStart;
+            foreach (Control c in _nav.Controls) c.MouseEnter += hoverStart;
+            _nav.MouseLeave += (s, e) => { if (!_nav.RectangleToScreen(_nav.ClientRectangle).Contains(Cursor.Position)) _navHover.Stop(); };
+            _navHover.Tick += (s, e) =>
+            {
+                _navHover.Stop();
+                if (NavPinned || _navOpen || !Visible) return;
+                if (!_nav.RectangleToScreen(_nav.ClientRectangle).Contains(Cursor.Position)) return;
+                _navOpen = true;
+                ApplyNav();
+            };
             _navTimer.Tick += (s, e) =>
             {
-                // ausgeklappt, nicht angepinnt: wieder einklappen, sobald die Maus die Navigation verlässt
-                if (!_navOpen || NavPinned || _nav.Capture || !Visible) return;
+                // ausgeklappt, nicht angepinnt: wieder einklappen, sobald die Maus die Navigation verlässt (nicht, solange das Menü offen ist)
+                if (!_navOpen || NavPinned || _nav.Capture || !Visible || _menuOpen) return;
                 if (!_nav.RectangleToScreen(_nav.ClientRectangle).Contains(Cursor.Position)) { _navOpen = false; ApplyNav(); }
             };
             _navTimer.Start();
@@ -307,9 +323,10 @@ namespace MonitorDimmer
         /// <summary>Text der Leiste während des Downloads.</summary>
         public void SetUpdateBarText(string text) { _updateBar.Text = text; }
 
-        /// <summary>Nach dem Schließen des Einstellungsmenüs: Markierung von "Einstellungen" entfernen.</summary>
+        /// <summary>Nach dem Schließen des Menüs: Markierung von "Extras" entfernen.</summary>
         public void SettingsMenuClosed()
         {
+            _menuOpen = false;
             if (!_navSettings.IsDisposed) _navSettings.Selected = false;
             CloseNav();
         }
@@ -464,20 +481,17 @@ namespace MonitorDimmer
         {
             var changed = ChangedPages();
             if (changed.Count == 0) return true;
-            string where = changed.Count == 1
-                ? "Die Änderungen auf der Seite „" + changed[0].Text + "“ sind noch nicht gespeichert."
-                : "Die Änderungen auf den Seiten " + string.Join(", ", changed.Select(x => "„" + x.Text + "“")) + " sind noch nicht gespeichert.";
+            // reines Einstellungsfenster: der Text nennt keine Seite (die Änderungen können auf mehreren Seiten liegen)
             if (!Visible) Show();
             if (WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal;
             Activate();
-            if (MessageBox.Show(this, where + "\r\n\r\nÄnderungen verwerfen?", "Monitor Dimmer",
+            if (MessageBox.Show(this, "Die Änderungen sind noch nicht gespeichert.\r\n\r\nÄnderungen verwerfen?", "Monitor Dimmer",
                     MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2) == DialogResult.Yes)
             {
                 _force = true; // bestätigt: das anschließende Schließen fragt nicht noch einmal
                 return true;
             }
-            ShowPage(changed[0]);
-            return false;
+            return false; // auf der aktuellen Seite bleiben
         }
 
         /// <summary>Schließen ohne Rückfrage (Programmende).</summary>
@@ -510,6 +524,8 @@ namespace MonitorDimmer
             _messageTimer.Dispose();
             _navTimer.Stop();
             _navTimer.Dispose();
+            _navHover.Stop();
+            _navHover.Dispose();
             base.OnFormClosed(e);
         }
     }

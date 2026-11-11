@@ -120,7 +120,11 @@ namespace MonitorDimmer
             // Monitor nimmt die Werte nicht an: kommt aus dem DDC-Thread, Hinweis im Infobereich
             _monitors.Problem += text => _sync.Post(_ => { if (!_exiting) ShowBalloon(text, ToolTipIcon.Warning); }, null);
             _tray.ContextMenuStrip.Opening += (s, e) => BuildMenu();
-            _tray.ContextMenuStrip.Opened += (s, e) => MenuHelper.RoundCorners(_tray.ContextMenuStrip);
+            _tray.ContextMenuStrip.Opened += (s, e) =>
+            {
+                MenuHelper.KeepOnScreen(_tray.ContextMenuStrip); // nicht auf den Nachbarbildschirm ragen
+                MenuHelper.RoundCorners(_tray.ContextMenuStrip);
+            };
             // Doppelklick auf das Symbol im Infobereich: Fenster mit der Spieleliste öffnen (ist es schon offen: nach vorn holen)
             _tray.MouseDoubleClick += (s, e) => { if (e.Button == MouseButtons.Left) ShowMainWindow(); };
             BuildMenu();
@@ -988,20 +992,22 @@ namespace MonitorDimmer
         private void ShowActions() { OpenPage(Pages().Item4); }
         private void ShowSchedule() { Pages(); OpenPage(_pageSchedule); }
         /// <summary>
-        /// "Einstellungen" unten in der Navigation des Fensters: gleiche Einträge wie Tray-Menü > Einstellungen,
-        /// als Menü rechts über dem Knopf (wie Wake on LAN).
+        /// "Extras" unten in der Navigation des Fensters (reines Einstellungsfenster, globale Vorgabe „Navigation links“):
+        /// Info, Anleitung, Protokoll, Sicherungen, dazu Konfiguration, Ordner und die Schalter; Menü rechts über dem Knopf.
         /// </summary>
         private void ShowSettingsMenu(Control anchor)
         {
             var mb = new ModernMenuBuilder(anchor);
             var menu = mb.CreateMenu();
+            menu.Items.Add(mb.Item("Info über Monitor Dimmer", MenuHelper.Info, ShowInfo));
+            menu.Items.Add(mb.Item("Anleitung", MenuHelper.Document, () => OpenFile(Path.Combine(_baseDir, "Liesmich.txt"), true)));
+            menu.Items.Add(mb.Item("Protokoll öffnen", MenuHelper.Log, () => OpenFile(Log.FilePath, true)));
+            menu.Items.Add(mb.Item("Sicherungen öffnen", MenuHelper.History, OpenBackups));
+            menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add(mb.Item("Konfiguration bearbeiten", MenuHelper.Document, () => OpenFile(_configPath, true)));
             menu.Items.Add(mb.Item("Konfiguration neu laden", MenuHelper.Sync, () => ReloadConfig(false)));
-            menu.Items.Add(mb.Item("Sicherungen öffnen", MenuHelper.History, OpenBackups));
-            menu.Items.Add(mb.Item("Protokoll öffnen", MenuHelper.Log, () => OpenFile(Log.FilePath, true)));
             menu.Items.Add(mb.Item("Programmordner öffnen", MenuHelper.Folder, () => OpenFile(_baseDir, false)));
             menu.Items.Add(mb.Item("Datenordner öffnen", MenuHelper.Folder, () => OpenFile(_dataDir, false)));
-            menu.Items.Add(mb.Item("Info über Monitor Dimmer", MenuHelper.Info, ShowInfo));
             menu.Items.Add(new ToolStripSeparator());
             bool autoOn = Autostart.IsEnabled();
             var autostart = mb.Item("Mit Windows starten", MenuHelper.Startup, () => ToggleAutostart(autoOn));
@@ -1020,7 +1026,8 @@ namespace MonitorDimmer
                 if (w != null) w.SettingsMenuClosed();
                 anchor.BeginInvoke(new Action(menu.Dispose));
             };
-            menu.Show(anchor, new Point(anchor.Width + (int)(4 * _menuScale), anchor.Height), ToolStripDropDownDirection.AboveRight);
+            // rechts über dem Knopf, auf den Bildschirm des Fensters begrenzt
+            MenuHelper.ShowOnScreen(menu, anchor, new Point(anchor.Width + (int)(4 * _menuScale), anchor.Height), true);
         }
 
         /// <summary>Info-Fenster als kleines Pop-up (über dem Hauptfenster, falls es offen ist).</summary>

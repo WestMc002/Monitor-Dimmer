@@ -98,7 +98,7 @@ namespace MonitorDimmer
             actions.Controls.Add(left);
             actions.Controls.Add(right);
             var info = new InfoBanner("Die große Nummer entspricht Handle=\"...\" in der Konfiguration (Datenordner\\Configurations\\Default.xml).\n" +
-                "Solange dieses Fenster offen ist, steht sie auch groß auf jedem Monitor. Ein Klick auf die Einblendung blendet sie aus.", k) { Dock = DockStyle.Top };
+                "Solange diese Seite zu sehen ist, steht sie auch groß auf jedem Monitor. Ein Klick auf die Einblendung blendet sie aus.", k) { Dock = DockStyle.Top };
             _footer.Controls.Add(info);
             _footer.Controls.Add(actions);
             _footer.Height = actions.Height + info.Height;
@@ -179,18 +179,39 @@ namespace MonitorDimmer
             _identify.Glyph = '\uE7B3';
         }
 
-        private void HideOverlays()
+        private void HideOverlays() { HideOverlays(true); }
+
+        /// <param name="byUser">true: vom Benutzer ausgeblendet (bleiben aus); false: Seite nicht mehr zu sehen (kommen mit der Seite wieder)</param>
+        private void HideOverlays(bool byUser)
         {
             foreach (var o in _overlays) { o.Close(); o.Dispose(); }
-            if (_overlays.Count > 0) _overlaysHiddenByUser = true;
+            if (_overlays.Count > 0 && byUser) _overlaysHiddenByUser = true;
             _overlays.Clear();
             _identify.Text = "Nummern auf Monitoren zeigen";
             _identify.Glyph = '\uE7B3';
         }
 
+        /// <summary>
+        /// Nummern nur, solange die Seite zu sehen ist: Im Hauptfenster bleibt die Seite beim Wechsel erhalten und wird
+        /// nur ausgeblendet; dann die Nummern schließen und beim Zurückwechseln wieder zeigen (außer der Benutzer hat sie ausgeblendet).
+        /// </summary>
+        protected override void OnVisibleChanged(EventArgs e)
+        {
+            base.OnVisibleChanged(e);
+            if (IsDisposed || Disposing || _identify == null) return;
+            if (!Visible) HideOverlays(false);
+            else if (_positioned && _overlays.Count == 0 && !_overlaysHiddenByUser) ShowOverlays();
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing) HideOverlays(false); // eingebettete Seite wird ohne Close verworfen
+            base.Dispose(disposing);
+        }
+
         protected override void OnFormClosed(FormClosedEventArgs e)
         {
-            HideOverlays();
+            HideOverlays(false);
             _instance = null;
             base.OnFormClosed(e);
         }
@@ -542,7 +563,10 @@ namespace MonitorDimmer
             int w = Math.Max(320, (int)(m.Bounds.Width * 0.20));
             int h = (int)(w * 0.66);
             Bounds = new Rectangle(m.Bounds.X + (m.Bounds.Width - w) / 2, m.Bounds.Y + (m.Bounds.Height - h) / 2, w, h);
-            using (var path = MonitorForm.Rounded(new RectangleF(0, 0, w, h), h * 0.07f))
+            // frei schwebende Fläche: Eckenradius 8 × Skalierung wie Fenster und Menüs in Windows 11 (globale Vorgabe)
+            float scale;
+            using (var g = CreateGraphics()) scale = g.DpiX / 96f;
+            using (var path = MonitorForm.Rounded(new RectangleF(0, 0, w, h), 8 * scale))
                 Region = new Region(path);
             Cursor = Cursors.Hand;
         }
@@ -578,7 +602,8 @@ namespace MonitorDimmer
             using (var bg = new LinearGradientBrush(new RectangleF(0, 0, w, h), Color.FromArgb(28, 36, 54), MonitorForm.CNavy, 90f))
                 g.FillRectangle(bg, 0, 0, w, h);
             float bw = Math.Max(3f, h * 0.014f);
-            using (var path = MonitorForm.Rounded(new RectangleF(bw / 2, bw / 2, w - bw, h - bw), h * 0.07f))
+            float radius = 8 * g.DpiX / 96f; // wie die Form der Einblendung (Region)
+            using (var path = MonitorForm.Rounded(new RectangleF(bw / 2, bw / 2, w - bw, h - bw), Math.Max(1f, radius - bw / 2)))
             using (var pen = new Pen(MonitorForm.CBright, bw))
                 g.DrawPath(pen, path);
 

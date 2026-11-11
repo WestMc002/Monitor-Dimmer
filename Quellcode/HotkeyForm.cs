@@ -162,7 +162,7 @@ namespace MonitorDimmer
             _list.Columns.Add("Status", S(130));
             _list.DoubleClick += (s, e) => EditSelected();
             _list.KeyDown += (s, e) => { if (e.KeyCode == Keys.Delete) RemoveSelected(); };
-            _list.ShowItemToolTips = true;
+            ModernToolTip.AttachItems(_list); // Hinweise im Programmdesign statt des Windows-Hinweises
             _list.SelectedIndexChanged += (s, e) => UpdateButtons();
             _list.ColumnClick += (s, e) => SortBy(e.Column);
             _list.Resize += (s, e) => StretchLastColumn();

@@ -149,6 +149,7 @@ namespace MonitorDimmer
                 BackColor = Ui.Card,
                 Font = new Font("Segoe UI", 9.5f)
             };
+            ModernToolTip.AttachItems(_list); // voller Pfad beim Überfahren, im Programmdesign
             _list.Columns.Add("Spiel", S(230));
             _list.Columns.Add("Programm", S(200));
             _list.Columns.Add("Status", S(110));
@@ -619,7 +620,7 @@ namespace MonitorDimmer
                 menu.Items.Add(mb.Item(target.Title, '\0', () => MoveSelected(target)));
             }
             if (menu.Items.Count == 0) menu.Items.Add(mb.Info("Kein anderes Profil"));
-            menu.Show(_moveButton, new Point(0, _moveButton.Height));
+            MenuHelper.ShowOnScreen(menu, _moveButton, new Point(0, _moveButton.Height), false);
         }
 
         private void MoveSelected(DimmingProfile target)

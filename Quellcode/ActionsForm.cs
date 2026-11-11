@@ -214,6 +214,7 @@ namespace MonitorDimmer
                 SmallImageList = _images,
                 ShowItemToolTips = true
             };
+            ModernToolTip.AttachItems(lv); // Hinweise im Programmdesign statt des Windows-Hinweises
             lv.Columns.Add("Aktion", S(400));
             lv.Resize += (s, e) => { if (lv.Columns.Count > 0) lv.Columns[0].Width = Math.Max(S(100), lv.ClientSize.Width - 2); };
             lv.Enter += (s, e) => SetActive(lv);
@@ -412,7 +413,7 @@ namespace MonitorDimmer
                 if (menu.Items.OfType<GlyphMenuItem>().Count() == 0)
                     menu.Items.Add(mb.Info("Liste ist leer"));
             }
-            menu.Show(owner, at);
+            MenuHelper.ShowOnScreen(menu, owner, at, false);
         }
 
         private ToolStripMenuItem CopyItem(ModernMenuBuilder mb, string text, char glyph, List<ActionDef> actions, List<ProfileData> targets)

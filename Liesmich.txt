@@ -5,6 +5,14 @@ Aktuelle Version: siehe Info-Fenster (Klick auf die Versionsnummer) bzw.
 Eigenschaften > Details der EXE. Vorgänger: Monitor Dimmer 1.3.2017.0120
 
 Versionen:
+  2.70.2026.1111 Knopf "Extras" statt "Einstellungen" unten in der
+                 Navigation; Navigation klappt nicht angepinnt auch per
+                 Maus aus; Menüs (auch das Tray-Menü) bleiben auf dem
+                 eigenen Bildschirm;
+                 Rückfrage beim Schließen ohne Seitennamen; die Nummern auf
+                 den Monitoren verschwinden beim Wechsel auf eine andere
+                 Seite; Hinweise in den Listen (z. B. voller Pfad in der
+                 Spieleliste) im Programmdesign statt im Windows-Stil
   2.68.2026.1111 "Speichern" und "Abbrechen" gelten für alle Seiten
                  gemeinsam (Seitenwechsel verwirft nichts); Rückfrage beim
                  Schließen mit ungespeicherten Änderungen
@@ -176,10 +184,11 @@ WAS IST NEU
   Tray-Symbol mit der Spieleliste. Das Info-Fenster bleibt ein kleines
   Fenster (Klick auf die Versionsnummer).
   Die Navigation lässt sich mit ☰ ein- und ausklappen und mit der
-  Stecknadel anpinnen (gespeichert in Configurations\Fenster.ini). Unten
-  in der Navigation öffnet "Einstellungen" dieselben Einträge wie im
-  Tray-Menü (Konfiguration, Sicherungen, Protokoll, Programmordner, Info,
-  Mit Windows starten); "Beenden" beendet das Programm ganz.
+  Stecknadel anpinnen (gespeichert in Configurations\Fenster.ini). Nicht
+  angepinnt klappt sie auch aus, wenn die Maus kurz darauf verweilt. Unten
+  in der Navigation öffnet "Extras" ein Menü (Info, Anleitung, Protokoll,
+  Sicherungen, Konfiguration, Programm- und Datenordner, Mit Windows
+  starten, Sanft überblenden); "Beenden" beendet das Programm ganz.
   "Speichern" und "Abbrechen" stehen einmal unten im Fenster und gelten
   für alle Seiten: Ein Seitenwechsel verwirft nichts, die Änderungen
   werden über alle Seiten gesammelt und gemeinsam gespeichert. Wer das

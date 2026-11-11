@@ -299,6 +299,7 @@ namespace MonitorDimmer
                 EditMode = DataGridViewEditMode.EditOnEnter,
                 AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill
             };
+            ModernToolTip.AttachCells(_grid); // Hinweise im Programmdesign statt des Windows-Hinweises
             _grid.RowTemplate.Height = S(28);
             // Kopfzeile: Höhe passend zur Skalierung, gleicher Stil wie die anderen Fenster
             _grid.EnableHeadersVisualStyles = false;

@@ -22,6 +22,8 @@ namespace MonitorDimmer
         private const TextFormatFlags Flags = TextFormatFlags.WordBreak | TextFormatFlags.NoPrefix | TextFormatFlags.NoPadding
             | TextFormatFlags.Left | TextFormatFlags.Top;
 
+        private string _shown; // Text bei Show() (Listeneinträge), sonst der per SetToolTip gesetzte
+
         public ModernToolTip()
         {
             OwnerDraw = true;
@@ -33,7 +35,7 @@ namespace MonitorDimmer
                 {
                     float k = g.DpiX / 96f;
                     int max = (int)(400 * k);
-                    string text = GetToolTip(e.AssociatedControl) ?? "";
+                    string text = _shown ?? GetToolTip(e.AssociatedControl) ?? "";
                     var size = TextRenderer.MeasureText(g, text, TipFont, new Size(max, 0), Flags);
                     int w = size.Width, h = size.Height;
                     if (!string.IsNullOrEmpty(ToolTipTitle))
@@ -61,6 +63,75 @@ namespace MonitorDimmer
                 }
                 TextRenderer.DrawText(e.Graphics, e.ToolTipText, TipFont, r, Ui.Text, Flags);
             };
+        }
+
+        /// <summary>
+        /// Hinweise der Listeneinträge (ListViewItem.ToolTipText) im Programmdesign statt des Windows-Hinweises der Liste
+        /// (der hat ungleiche Ränder und bleibt im Dunkelmodus hell). Schaltet ShowItemToolTips der Liste ab.
+        /// </summary>
+        public static void AttachItems(ListView list)
+        {
+            list.ShowItemToolTips = false;
+            var tip = new ModernToolTip();
+            ListViewItem current = null;
+            var timer = new Timer { Interval = SystemInformation.MouseHoverTime + 100 };
+            Point at = Point.Empty;
+            timer.Tick += (s, e) =>
+            {
+                timer.Stop();
+                if (current == null || list.IsDisposed || string.IsNullOrEmpty(current.ToolTipText)) return;
+                tip.ShowAt(current.ToolTipText, list, new Point(at.X, at.Y + Cursor.Current.Size.Height * 2 / 3));
+            };
+            list.MouseMove += (s, e) =>
+            {
+                var hit = list.GetItemAt(e.X, e.Y);
+                if (hit == current) return;
+                current = hit;
+                tip.Hide(list);
+                timer.Stop();
+                at = e.Location;
+                if (hit != null && !string.IsNullOrEmpty(hit.ToolTipText)) timer.Start();
+            };
+            list.MouseLeave += (s, e) => { current = null; timer.Stop(); tip.Hide(list); };
+            list.MouseDown += (s, e) => { timer.Stop(); tip.Hide(list); };
+            list.Disposed += (s, e) => { timer.Dispose(); tip.Dispose(); };
+        }
+
+        /// <summary>Hinweise von Zellen und Spaltenköpfen (ToolTipText) im Programmdesign statt des Windows-Hinweises.</summary>
+        public static void AttachCells(DataGridView grid)
+        {
+            grid.ShowCellToolTips = false;
+            var tip = new ModernToolTip();
+            string text = null;
+            var timer = new Timer { Interval = SystemInformation.MouseHoverTime + 100 };
+            timer.Tick += (s, e) =>
+            {
+                timer.Stop();
+                if (string.IsNullOrEmpty(text) || grid.IsDisposed) return;
+                var p = grid.PointToClient(Cursor.Position);
+                tip.ShowAt(text, grid, new Point(p.X, p.Y + Cursor.Current.Size.Height * 2 / 3));
+            };
+            grid.CellMouseEnter += (s, e) =>
+            {
+                tip.Hide(grid);
+                timer.Stop();
+                text = null;
+                if (e.ColumnIndex < 0) return;
+                if (e.RowIndex < 0) text = grid.Columns[e.ColumnIndex].ToolTipText;
+                else text = grid.Rows[e.RowIndex].Cells[e.ColumnIndex].ToolTipText;
+                if (!string.IsNullOrEmpty(text)) timer.Start();
+            };
+            grid.CellMouseLeave += (s, e) => { text = null; timer.Stop(); tip.Hide(grid); };
+            grid.MouseDown += (s, e) => { timer.Stop(); tip.Hide(grid); };
+            grid.Disposed += (s, e) => { timer.Dispose(); tip.Dispose(); };
+        }
+
+        /// <summary>Text an einer Stelle zeigen (wie Show, aber mit richtiger Größe im Programmdesign).</summary>
+        public void ShowAt(string text, IWin32Window window, Point point)
+        {
+            _shown = text;
+            try { Show(text, window, point, AutoPopDelay); }
+            finally { _shown = null; }
         }
     }
 }

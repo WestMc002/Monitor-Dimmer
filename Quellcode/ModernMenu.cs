@@ -410,6 +410,38 @@ namespace MonitorDimmer
     /// <summary>Hilfen für Symbole (Windows-Symbolschrift) und runde Ecken.</summary>
     internal static class MenuHelper
     {
+        /// <summary>
+        /// Menü an einem Element zeigen, begrenzt auf den Arbeitsbereich des Bildschirms, auf dem das Element liegt.
+        /// Windows verschiebt Menüs am Rand nur innerhalb des ganzen Desktops, sonst ragen sie auf den Nachbarbildschirm
+        /// (globale Vorgabe „Mehrere Bildschirme“, Referenz Dock Pilot).
+        /// </summary>
+        /// <param name="at">Punkt im Element: obere linke Ecke (unten aufklappen) bzw. untere linke Ecke (above = true)</param>
+        /// <summary>
+        /// Offenes Menü (z. B. Tray-Menü, das Windows an der Maus öffnet) in den Arbeitsbereich des Bildschirms unter der
+        /// Maus schieben. Referenz: WindowGrid ab 1.52.
+        /// </summary>
+        public static void KeepOnScreen(ToolStripDropDown menu)
+        {
+            var area = Screen.FromPoint(Cursor.Position).WorkingArea;
+            var r = menu.Bounds;
+            int x = Math.Max(area.Left, Math.Min(r.X, area.Right - r.Width));
+            int y = Math.Max(area.Top, Math.Min(r.Y, area.Bottom - r.Height));
+            if (x != r.X || y != r.Y) menu.Location = new Point(x, y);
+        }
+
+        public static void ShowOnScreen(ToolStripDropDown menu, Control anchor, Point at, bool above)
+        {
+            var size = menu.GetPreferredSize(Size.Empty);
+            var p = anchor.PointToScreen(at);
+            var r = new Rectangle(p.X, above ? p.Y - size.Height : p.Y, size.Width, size.Height);
+            var area = Screen.FromRectangle(anchor.RectangleToScreen(anchor.ClientRectangle)).WorkingArea;
+            if (r.Right > area.Right) r.X = area.Right - r.Width;
+            if (r.X < area.Left) r.X = area.Left;
+            if (r.Bottom > area.Bottom) r.Y = above ? area.Bottom - r.Height : anchor.PointToScreen(Point.Empty).Y - r.Height; // unten kein Platz: nach oben
+            if (r.Y < area.Top) r.Y = area.Top;
+            menu.Show(r.Location);
+        }
+
         private static string _iconFont;
 
         // Zeichen aus "Segoe Fluent Icons" (Windows 11) bzw. "Segoe MDL2 Assets" (Windows 10)
