@@ -55,6 +55,8 @@ namespace MonitorDimmer
                 var cfg = AppConfig.Load(configPath);
                 Accent.Enabled = cfg.UseWindowsAccentColor;
                 var dimmed = cfg.Profiles.FirstOrDefault(p => !p.IsUndimmed && p.AutoApply) ?? cfg.Undimmed;
+                // Beispiel für die Seite "Zeitplan": abends dimmen
+                cfg.Schedule = new ScheduleDef { Enabled = true, Profile = dimmed.Name, From = new TimeSpan(20, 0, 0), To = new TimeSpan(7, 0, 0) };
                 Icon icon = null;
                 try { icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch { }
 
@@ -96,13 +98,15 @@ namespace MonitorDimmer
                         var actions = new PageDef { Text = "Aktionen", Glyph = MenuHelper.Actions, Create = () => new ActionsForm(cfg, temp, dimmed.Name, icon) };
                         var hotkeys = new PageDef { Text = "Tastenkürzel", Glyph = MenuHelper.Keyboard, Create = () => new HotkeyForm(cfg, k => "", icon) };
                         var monitors = new PageDef { Text = "Monitore", Glyph = MenuHelper.Monitor, Create = () => new MonitorForm(manager, () => cfg, () => dimmed, icon) };
-                        using (var main = new MainWindow(new List<PageDef> { monitors, games, actions, hotkeys }, icon, c => { }, () => { }))
+                        var schedule = new PageDef { Text = "Zeitplan", Glyph = MenuHelper.Clock, Create = () => new ScheduleForm(cfg, icon) };
+                        using (var main = new MainWindow(new List<PageDef> { monitors, games, actions, schedule, hotkeys }, icon, c => { }, () => { }))
                         {
                             main.ShowInTaskbar = false;
                             main.Show();
                             main.TopMost = true;
                             Shot(backdrop, main, games, Path.Combine(outDir, "spieleliste-" + suffix + ".png"));
                             Shot(backdrop, main, actions, Path.Combine(outDir, "aktionen-" + suffix + ".png"));
+                            Shot(backdrop, main, schedule, Path.Combine(outDir, "zeitplan-" + suffix + ".png"));
                             Shot(backdrop, main, hotkeys, Path.Combine(outDir, "tastenkuerzel-" + suffix + ".png"));
                             Shot(backdrop, main, monitors, Path.Combine(outDir, "monitore-" + suffix + ".png"));
                             // Info als kleines Pop-up, solange das Hauptfenster noch offen ist: sonst holt Windows das

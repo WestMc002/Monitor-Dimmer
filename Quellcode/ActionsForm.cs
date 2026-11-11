@@ -14,7 +14,7 @@ using System.Windows.Forms;
 namespace MonitorDimmer
 {
     /// <summary>Fenster "Aktionen": was beim Aktivieren/Deaktivieren eines Profils passiert (statt .bat-Skripten).</summary>
-    internal sealed class ActionsForm : Form
+    internal sealed class ActionsForm : Form, ISettingsPage
     {
         private sealed class ProfileData
         {
@@ -26,6 +26,7 @@ namespace MonitorDimmer
         }
 
         private readonly List<ProfileData> _profiles;
+        private readonly string _initial; // Stand beim Öffnen, für HasChanges
         private readonly string _resourcesFolder;
         private readonly ComboBox _profile;
         private readonly ListView _applied, _unapplied;
@@ -35,6 +36,25 @@ namespace MonitorDimmer
         private ListView _active;
         private readonly ActionChecker _checker = new ActionChecker();
         private float k = 1f;
+
+        // ---------- ISettingsPage: das Hauptfenster speichert alle Seiten gemeinsam ----------
+
+        /// <summary>Alle Aktionen aller Profile als Text (Reihenfolge zählt mit), zum Vergleich mit dem Stand beim Öffnen.</summary>
+        private string State()
+        {
+            var sb = new System.Text.StringBuilder();
+            foreach (var p in _profiles)
+            {
+                sb.Append(p.Source.Name).Append(p.RemoveHandlers ? "\t-\n" : "\n");
+                foreach (var a in p.Applied) sb.Append("+\t").Append(a.Type).Append('\t').Append(a.Value).Append('\t').Append(a.Arguments).Append('\n');
+                foreach (var a in p.Unapplied) sb.Append("-\t").Append(a.Type).Append('\t').Append(a.Value).Append('\t').Append(a.Arguments).Append('\n');
+            }
+            return sb.ToString();
+        }
+
+        public bool HasChanges { get { return State() != _initial; } }
+
+        public string CheckInput() { return null; }
 
         /// <summary>Profile mit den geänderten Aktionen (zum Speichern).</summary>
         public List<DimmingProfile> Result
@@ -60,6 +80,7 @@ namespace MonitorDimmer
                 Applied = p.OnApplied.Select(a => a.Clone()).ToList(),
                 Unapplied = p.OnUnapplied.Select(a => a.Clone()).ToList()
             }).ToList();
+            _initial = State();
 
             Text = "Monitor Dimmer - Aktionen";
             if (icon != null) Icon = icon;
@@ -144,16 +165,8 @@ namespace MonitorDimmer
             tip.SetToolTip(_copy, "Markierte Aktion oder ganze Liste in andere Profile kopieren");
             left.Controls.AddRange(new Control[] { add, _edit, _remove, _up, _down, _copy, _test });
 
-            var right = new FlowLayoutPanel { Dock = DockStyle.Right, AutoSize = true, WrapContents = false, FlowDirection = FlowDirection.RightToLeft, BackColor = Ui.Back, Padding = new Padding(0, S(16), 0, 0) };
-            // „Abbrechen“ links, „Speichern“ ganz rechts (globale Vorgabe)
-            var cancel = new ModernButton("Abbrechen", '\0', false, k) { DialogResult = DialogResult.Cancel };
-            var save = new ModernButton("Speichern", '', true, k) { Margin = new Padding(0) };
-            save.Click += (s, e) => { DialogResult = DialogResult.OK; Close(); };
-            right.Controls.Add(save);
-            right.Controls.Add(cancel);
             actions.Controls.Add(left);
-            actions.Controls.Add(right);
-            ButtonRow.Fit(actions, left, right); // schmal: Knöpfe links nur mit Symbol, nichts liegt unter "Speichern"
+            ButtonRow.Fit(actions, left, null); // schmal: Knöpfe nur mit Symbol („Speichern“ und „Abbrechen“ hat das Hauptfenster)
 
             var info = new InfoBanner("Die Aktionen laufen nacheinander im Hintergrund. Dienste und Energiesparpläne brauchen Adminrechte.\n" +
                 "Doppelklick bearbeitet, Entf entfernt. Ins Protokoll kommt jede Aktion mit Ergebnis.", k) { Dock = DockStyle.Bottom };
@@ -166,9 +179,6 @@ namespace MonitorDimmer
             Controls.Add(body);
             Controls.Add(head);
             Controls.Add(new SignatureFooter(k));
-            CancelButton = cancel;
-            AcceptButton = save;
-
             _active = _applied;
             _profile.SelectedIndexChanged += (s, e) => ShowProfile();
             int sel = Math.Max(0, _profiles.FindIndex(p => string.Equals(p.Source.Name, selectProfile, StringComparison.OrdinalIgnoreCase)));

@@ -1,4 +1,4 @@
-// Monitor Dimmer – Hauptfenster mit Navigation (Monitore, Spieleliste, Tastenkürzel, Aktionen)
+// Monitor Dimmer – Hauptfenster mit Navigation (Monitore, Spieleliste, Aktionen, Zeitplan, Tastenkürzel)
 // Copyright (C) 2026 Günther Schoder · https://www.westmc002.de
 // Lizenz: GNU General Public License v3.0 oder später (siehe LICENSE)
 // SPDX-License-Identifier: GPL-3.0-or-later
@@ -17,15 +17,26 @@ namespace MonitorDimmer
         public string Text;
         public char Glyph;
         public Func<Form> Create;
-        /// <summary>Nach "Speichern" bzw. "Abbrechen" der Seite; Rückgabe = kurze Meldung im Fenster (oder null).</summary>
-        public Func<Form, DialogResult, string> Done;
-        /// <summary>Seite wurde geöffnet bzw. geschlossen (z. B. Tastenkürzel abschalten, solange die Seite offen ist).</summary>
+        /// <summary>Änderungen der Seite speichern; Rückgabe null = gespeichert, sonst die Fehlermeldung.</summary>
+        public Func<Form, string> Save;
+        /// <summary>Seite wird angezeigt bzw. verlassen (z. B. Tastenkürzel abschalten, solange die Seite zu sehen ist).</summary>
         public Action Opened, Closed;
+    }
+
+    /// <summary>Seite mit Einstellungen: Das Hauptfenster speichert alle geänderten Seiten gemeinsam.</summary>
+    internal interface ISettingsPage
+    {
+        /// <summary>Gibt es Änderungen, die noch nicht gespeichert sind?</summary>
+        bool HasChanges { get; }
+        /// <summary>Eingaben prüfen (vor dem Speichern): null = in Ordnung, sonst die Fehlermeldung.</summary>
+        string CheckInput();
     }
 
     /// <summary>
     /// Ein Fenster für alle Ansichten (wie Wake on LAN): Navigation links, die Seite rechts, Footer unten.
-    /// Speichern und Abbrechen gelten je Seite; ein Wechsel über die Navigation gilt wie "Abbrechen".
+    /// Reines Einstellungsfenster (globale Vorgabe „Einstellungsseiten“): Ein Seitenwechsel verwirft nichts, die
+    /// Änderungen werden über alle Seiten gesammelt; „Speichern“ und „Abbrechen“ unten gelten für alle Seiten.
+    /// Schließen mit ungespeicherten Änderungen fragt nach.
     /// </summary>
     internal sealed class MainWindow : Form
     {
@@ -41,10 +52,14 @@ namespace MonitorDimmer
         private Action _updateInstall, _updatePage, _updateLater;
         private bool _navOpen; // eingeklappt, aber vorübergehend ausgeklappt (liegt über dem Inhalt)
         private readonly Label _message;
-        private readonly Timer _messageTimer = new Timer { Interval = 6000 };
+        private readonly Timer _messageTimer = new Timer { Interval = 4000 }; // wie WindowGrid
+        private readonly Panel _bar;          // unten: Meldung, „Abbrechen“, „Speichern“ für alle Seiten
+        private readonly ModernButton _save, _cancel;
         private PageDef _current;
         private Form _view;
-        private bool _leaving; // Seite wird über die Navigation oder beim Schließen verlassen (nicht neu öffnen)
+        /// <summary>Geöffnete Seiten bleiben beim Wechsel erhalten (mit ihren ungespeicherten Änderungen).</summary>
+        private readonly Dictionary<PageDef, Form> _views = new Dictionary<PageDef, Form>();
+        private bool _force;  // Schließen ohne Rückfrage (Programmende bzw. schon bestätigt)
 
         /// <param name="settings">"Einstellungen" unten in der Navigation: zeigt das Einstellungsmenü am Knopf (null = ausblenden)</param>
         /// <param name="quit">"Beenden" unten in der Navigation: Programm ganz beenden (null = ausblenden)</param>
@@ -101,7 +116,7 @@ namespace MonitorDimmer
             _nav.Controls.Add(_navSettings);
             // komplett beenden (das X schließt nur das Fenster, das Programm läuft im Infobereich weiter)
             _navQuit = new NavButton("Beenden", MenuHelper.Power, k) { AccessibleName = "Beenden (auch im Infobereich)", Visible = quit != null };
-            _navQuit.Click += (s, e) => { CloseNav(); if (quit != null) quit(); };
+            _navQuit.Click += (s, e) => { CloseNav(); if (quit != null) quit(); }; // die Rückfrage bei Änderungen stellt der Aufrufer (ConfirmDiscard)
             _nav.Controls.Add(_navQuit);
             _nav.Resize += (s, e) => LayoutNav();
             _navTimer.Tick += (s, e) =>
@@ -114,19 +129,32 @@ namespace MonitorDimmer
 
             // ---------- Inhalt und Meldungszeile ----------
             _content = new Panel { Dock = DockStyle.Fill, BackColor = Ui.Back };
+            // ---------- unten: „Abbrechen“ links, „Speichern“ ganz rechts, links davon die Meldung (grün) bzw. der Fehler (rot) ----------
+            // Abstand nach oben 16 wie bisher auf den Seiten (Knopfzeile unter dem Hinweis), unten 8 bis zum Footer
+            _bar = new Panel { Dock = DockStyle.Bottom, BackColor = Ui.Back, Padding = new Padding(S(28), S(16), S(28), S(8)) };
+            var right = new FlowLayoutPanel { Dock = DockStyle.Right, AutoSize = true, WrapContents = false, FlowDirection = FlowDirection.RightToLeft, BackColor = Ui.Back };
+            _cancel = new ModernButton("Abbrechen", '\0', false, k);
+            _save = new ModernButton("Speichern", '\uE74E', true, k) { Margin = new Padding(0) };
+            _cancel.Click += (s, e) => DiscardAll();
+            _save.Click += (s, e) => SaveAll();
+            right.Controls.Add(_save);
+            right.Controls.Add(_cancel);
             _message = new Label
             {
-                Dock = DockStyle.Bottom,
-                Height = S(30),
+                Dock = DockStyle.Fill,
                 ForeColor = Ui.Green,
                 BackColor = Ui.Back,
-                TextAlign = ContentAlignment.MiddleLeft,
-                Padding = new Padding(S(28), 0, S(28), 0),
+                TextAlign = ContentAlignment.MiddleRight,
+                Padding = new Padding(0, 0, S(12), 0),
                 AutoEllipsis = true,
-                UseMnemonic = false,
-                Visible = false
+                UseMnemonic = false
             };
-            _messageTimer.Tick += (s, e) => { _messageTimer.Stop(); _message.Visible = false; };
+            _bar.Controls.Add(_message);
+            _bar.Controls.Add(right);
+            _bar.Height = _bar.Padding.Vertical + _save.Height;
+            _messageTimer.Tick += (s, e) => { _messageTimer.Stop(); _message.Text = ""; };
+            CancelButton = _cancel;
+            AcceptButton = _save;
 
             // Andockreihenfolge: Footer über die volle Breite, dann Platzhalter der Navigation, dann Inhalt;
             // die Navigation selbst ist nicht angedockt (liegt ausgeklappt über dem Inhalt)
@@ -141,7 +169,7 @@ namespace MonitorDimmer
             _updateHost.Controls.Add(_updateBar);
 
             Controls.Add(_content);
-            Controls.Add(_message);
+            Controls.Add(_bar);
             Controls.Add(_updateHost);
             Controls.Add(_navSpacer);
             Controls.Add(_footer);
@@ -304,23 +332,29 @@ namespace MonitorDimmer
             _navSettings.SetBounds(x, bottom - h, w, h);
         }
 
-        /// <summary>Seite öffnen. Eine offene andere Seite wird verlassen (wie "Abbrechen").</summary>
+        /// <summary>Seite zeigen. Die bisherige Seite bleibt mit ihren Änderungen erhalten (nichts wird verworfen).</summary>
         public void ShowPage(PageDef page)
         {
             if (_view != null && _current == page) { _view.Focus(); return; }
-            LeaveView();
-            _message.Visible = false;
-            OpenView(page);
-        }
-
-        private void OpenView(PageDef page)
-        {
-            var f = page.Create();
+            HideView();
+            if (_message.ForeColor != Ui.Red) _message.Text = ""; // ein Fehler bleibt stehen, bis er behoben ist
+            Form f;
+            if (!_views.TryGetValue(page, out f) || f.IsDisposed) f = CreateView(page);
             _current = page;
             _view = f;
             foreach (var kv in _buttons) kv.Value.Selected = kv.Key == page;
             Text = "Monitor Dimmer - " + page.Text;
+            if (page.Opened != null) page.Opened();
+            f.Visible = true;
+            f.BringToFront();
+            _content.PerformLayout(); // Seiten, die ihre Größe selbst setzen (Monitore), wieder einpassen
+            f.Focus();
+        }
 
+        private Form CreateView(PageDef page)
+        {
+            var f = page.Create();
+            _views[page] = f;
             f.TopLevel = false;
             f.FormBorderStyle = FormBorderStyle.None;
             f.ShowInTaskbar = false;
@@ -329,20 +363,11 @@ namespace MonitorDimmer
             // Footer hat das Hauptfenster; "Schließen" entfällt (Fenster schließt über das X)
             foreach (var footer in f.Controls.OfType<SignatureFooter>().ToList()) f.Controls.Remove(footer);
             foreach (var b in AllButtons(f))
-            {
-                var button = b;
-                if (button.Text == "Schließen") { button.Visible = false; continue; }
-                // Knöpfe mit DialogResult schließen ein eingebettetes Fenster nicht von selbst
-                if (button.DialogResult != DialogResult.None)
-                    button.Click += (s, e) => { f.DialogResult = button.DialogResult; BeginInvoke(new Action(f.Close)); };
-            }
-            f.FormClosed += (s, e) => BeginInvoke(new Action(() => EndView(f)));
-            f.Dock = DockStyle.Fill; // jede Seite füllt den Inhaltsbereich (Info mittelt ihren Inhalt selbst)
+                if (b.Text == "Schließen") b.Visible = false;
+            f.Dock = DockStyle.Fill; // jede Seite füllt den Inhaltsbereich
+            f.Visible = false;
             _content.Controls.Add(f);
-            if (page.Opened != null) page.Opened();
-            f.Show();
-            _content.PerformLayout(); // Seiten, die ihre Größe selbst setzen (Monitore), wieder einpassen
-            f.Focus();
+            return f;
         }
 
         private static IEnumerable<Button> AllButtons(Control c)
@@ -355,55 +380,128 @@ namespace MonitorDimmer
             }
         }
 
-        /// <summary>Offene Seite ohne Speichern verlassen.</summary>
-        private void LeaveView()
+        /// <summary>Sichtbare Seite ausblenden (sie bleibt erhalten).</summary>
+        private void HideView()
         {
             var f = _view;
             if (f == null) return;
-            _leaving = true;
-            try
-            {
-                f.DialogResult = DialogResult.Cancel;
-                if (!f.IsDisposed) f.Close();
-                EndView(f);
-            }
-            finally { _leaving = false; }
+            var page = _current;
+            _view = null;
+            if (!f.IsDisposed) f.Visible = false;
+            if (page != null && page.Closed != null) page.Closed();
         }
 
-        private void EndView(Form f)
+        /// <summary>Alle Seiten verwerfen (nach Speichern bzw. Abbrechen); die aktuelle Seite wird auf Wunsch frisch geöffnet.</summary>
+        private void ResetViews(bool reopen)
         {
-            if (_view != f) return;
             var page = _current;
-            var result = f.DialogResult;
-            bool reopen = !_leaving && !IsDisposed && Visible;
-            _view = null;
-            string msg = null;
-            try { if (page.Done != null) msg = page.Done(f, result); }
-            finally
+            HideView();
+            foreach (var f in _views.Values.ToList())
             {
-                if (page.Closed != null) page.Closed();
                 _content.Controls.Remove(f);
                 if (!f.IsDisposed) f.Dispose();
             }
-            if (!reopen) return;
-            // nach Speichern bzw. Abbrechen: Seite frisch anzeigen, mit kurzer Meldung
-            OpenView(page);
-            if (!string.IsNullOrEmpty(msg)) ShowMessage(msg, result == DialogResult.OK);
+            _views.Clear();
+            _current = null;
+            if (reopen && page != null && !IsDisposed) ShowPage(page);
+        }
+
+        /// <summary>Seiten mit ungespeicherten Änderungen, in der Reihenfolge der Navigation.</summary>
+        private List<PageDef> ChangedPages()
+        {
+            var list = new List<PageDef>();
+            foreach (var p in _pages)
+            {
+                Form f;
+                if (!_views.TryGetValue(p, out f) || f.IsDisposed) continue;
+                var page = f as ISettingsPage;
+                if (page != null && page.HasChanges) list.Add(p);
+            }
+            return list;
+        }
+
+        public bool HasChanges { get { return ChangedPages().Count > 0; } }
+
+        /// <summary>„Speichern“: erst alle geänderten Seiten prüfen, dann alle speichern. Bei einem Fehler die Seite zeigen.</summary>
+        private void SaveAll()
+        {
+            var changed = ChangedPages();
+            if (changed.Count == 0) { ShowMessage("Es gibt keine Änderungen.", true); return; }
+            foreach (var p in changed)
+            {
+                string error = ((ISettingsPage)_views[p]).CheckInput();
+                if (error == null) continue;
+                ShowPage(p);
+                ShowMessage(changed.Count > 1 ? p.Text + ": " + error : error, false);
+                return;
+            }
+            foreach (var p in changed)
+            {
+                string error = p.Save != null ? p.Save(_views[p]) : null;
+                if (error == null) continue;
+                ShowPage(p);
+                ShowMessage(error, false);
+                return;
+            }
+            ResetViews(true); // Seiten frisch aus der gespeicherten Konfiguration
+            ShowMessage(changed.Count == 1 ? changed[0].Text + " gespeichert." : "Gespeichert: " + string.Join(", ", changed.Select(x => x.Text)) + ".", true);
+        }
+
+        /// <summary>„Abbrechen“: verwirft die Änderungen aller Seiten ohne Rückfrage.</summary>
+        private void DiscardAll()
+        {
+            bool changed = HasChanges;
+            ResetViews(true);
+            if (changed) ShowMessage("Änderungen verworfen.", true);
+            else _message.Text = "";
+        }
+
+        /// <summary>
+        /// Rückfrage bei ungespeicherten Änderungen (globale Vorgabe): „Nein“ ist vorausgewählt und bleibt auf der Seite.
+        /// Ohne Änderungen keine Rückfrage. Rückgabe true = verwerfen bzw. nichts zu verwerfen.
+        /// </summary>
+        public bool ConfirmDiscard()
+        {
+            var changed = ChangedPages();
+            if (changed.Count == 0) return true;
+            string where = changed.Count == 1
+                ? "Die Änderungen auf der Seite „" + changed[0].Text + "“ sind noch nicht gespeichert."
+                : "Die Änderungen auf den Seiten " + string.Join(", ", changed.Select(x => "„" + x.Text + "“")) + " sind noch nicht gespeichert.";
+            if (!Visible) Show();
+            if (WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal;
+            Activate();
+            if (MessageBox.Show(this, where + "\r\n\r\nÄnderungen verwerfen?", "Monitor Dimmer",
+                    MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2) == DialogResult.Yes)
+            {
+                _force = true; // bestätigt: das anschließende Schließen fragt nicht noch einmal
+                return true;
+            }
+            ShowPage(changed[0]);
+            return false;
+        }
+
+        /// <summary>Schließen ohne Rückfrage (Programmende).</summary>
+        public void ForceClose()
+        {
+            _force = true;
+            Close();
         }
 
         public void ShowMessage(string text, bool ok)
         {
             _message.Text = text;
             _message.ForeColor = ok ? Ui.Green : Ui.Red;
-            _message.Visible = true;
             _messageTimer.Stop();
-            _messageTimer.Start();
+            if (ok) _messageTimer.Start(); // ein Fehler bleibt stehen
         }
 
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
             base.OnFormClosing(e);
-            if (!e.Cancel) LeaveView(); // Schließen über das X verwirft wie "Abbrechen"; das Programm läuft im Infobereich weiter
+            if (e.Cancel) return;
+            // Schließen über das X: bei ungespeicherten Änderungen erst nachfragen; das Programm läuft im Infobereich weiter
+            if (!_force && e.CloseReason == CloseReason.UserClosing && !ConfirmDiscard()) { e.Cancel = true; return; }
+            ResetViews(false);
         }
 
         protected override void OnFormClosed(FormClosedEventArgs e)

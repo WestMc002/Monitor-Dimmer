@@ -46,6 +46,28 @@ namespace MonitorDimmer
         [DllImport("user32.dll", CharSet = CharSet.Unicode)]
         public static extern bool GetMonitorInfo(IntPtr hMonitor, ref MONITORINFOEX info);
 
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        public struct DISPLAY_DEVICE
+        {
+            public int cb;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)]
+            public string DeviceName;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)]
+            public string DeviceString;
+            public int StateFlags;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)]
+            public string DeviceID;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)]
+            public string DeviceKey;
+        }
+
+        public const int DISPLAY_DEVICE_ACTIVE = 0x1;
+        public const uint EDD_GET_DEVICE_INTERFACE_NAME = 0x1;
+
+        /// <summary>Mit dem Namen einer Grafikausgabe (\\.\DISPLAY1) liefert die Funktion deren Monitore.</summary>
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        public static extern bool EnumDisplayDevices(string device, uint index, ref DISPLAY_DEVICE info, uint flags);
+
         [DllImport("dxva2.dll", SetLastError = true)]
         public static extern bool GetNumberOfPhysicalMonitorsFromHMONITOR(IntPtr hMonitor, out uint count);
 

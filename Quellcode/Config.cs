@@ -102,6 +102,43 @@ namespace MonitorDimmer
         public string Profile;
     }
 
+    /// <summary>
+    /// Zeitplan: In diesem Zeitraum gelten im Leerlauf (kein Spiel, Automatik) die Monitorwerte eines Profils
+    /// statt "Ungedimmt", z. B. abends dunkler. Aktionen des Profils laufen dabei nicht.
+    /// </summary>
+    internal sealed class ScheduleDef
+    {
+        public bool Enabled;
+        public string Profile = "";
+        public TimeSpan From = new TimeSpan(20, 0, 0);
+        public TimeSpan To = new TimeSpan(7, 0, 0);
+
+        /// <summary>Liegt die Uhrzeit im Zeitraum? "Bis" vor "Von" bedeutet über Mitternacht.</summary>
+        public bool Contains(TimeSpan time)
+        {
+            if (From == To) return false;
+            return From < To ? time >= From && time < To : time >= From || time < To;
+        }
+
+        public static bool TryParseTime(string text, out TimeSpan time)
+        {
+            time = TimeSpan.Zero;
+            if (string.IsNullOrWhiteSpace(text)) return false;
+            var parts = text.Trim().Replace('.', ':').Split(':');
+            int h, m = 0;
+            if (parts.Length < 1 || parts.Length > 2) return false;
+            if (!int.TryParse(parts[0].Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out h) || h > 23) return false;
+            if (parts.Length == 2 && (!int.TryParse(parts[1].Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out m) || m > 59)) return false;
+            time = new TimeSpan(h, m, 0);
+            return true;
+        }
+
+        public static string Format(TimeSpan time)
+        {
+            return time.Hours.ToString("00") + ":" + time.Minutes.ToString("00");
+        }
+    }
+
     internal sealed class AppConfig
     {
         public string FilePath;
@@ -114,6 +151,9 @@ namespace MonitorDimmer
         public bool UndimScriptsOnGameExit = true;
         /// <summary>Knöpfe und Hervorhebungen in der Windows-Akzentfarbe statt im festen Blau.</summary>
         public bool UseWindowsAccentColor = true;
+        /// <summary>Helligkeit beim Profilwechsel in mehreren Schritten überblenden statt springen.</summary>
+        public bool SmoothTransition = true;
+        public ScheduleDef Schedule = new ScheduleDef();
         public List<DimmingProfile> Profiles = new List<DimmingProfile>();
         public List<HotkeyDef> Hotkeys = new List<HotkeyDef>();
         public List<string> GameSearchFolders = new List<string>();
@@ -161,6 +201,17 @@ namespace MonitorDimmer
             cfg.ReapplyDelaySeconds = (int)ParseLong(Child(root, "ReapplyDelaySeconds"), 3);
             cfg.UndimScriptsOnGameExit = ParseBool(Text(Child(root, "UndimScriptsOnGameExit")), true);
             cfg.UseWindowsAccentColor = ParseBool(Text(Child(root, "UseWindowsAccentColor")), true);
+            cfg.SmoothTransition = ParseBool(Text(Child(root, "SmoothTransition")), true);
+
+            var sched = Child(root, "Schedule");
+            if (sched != null)
+            {
+                cfg.Schedule.Enabled = ParseBool(Attr(sched, "Enabled"), false);
+                cfg.Schedule.Profile = (Attr(sched, "Profile") ?? "").Trim();
+                TimeSpan t;
+                if (ScheduleDef.TryParseTime(Attr(sched, "From"), out t)) cfg.Schedule.From = t;
+                if (ScheduleDef.TryParseTime(Attr(sched, "To"), out t)) cfg.Schedule.To = t;
+            }
 
             var profilesEl = Child(root, "DimmingProfiles");
             if (profilesEl != null)
@@ -353,6 +404,42 @@ namespace MonitorDimmer
                 else root.Add(new XText("  "), newList, new XText("\n"));
             }
             Save(doc, configPath);
+        }
+
+        /// <summary>Setzt eine einfache Einstellung direkt unter dem Wurzelelement, z. B. SmoothTransition (vorher Sicherung).</summary>
+        public static void SetRootValue(string configPath, string name, string value)
+        {
+            var doc = XDocument.Load(configPath, LoadOptions.PreserveWhitespace);
+            var root = doc.Root;
+            XNamespace ns = root.Name.Namespace;
+            var el = Child(root, name);
+            if (el != null) el.Value = value;
+            else AddBeforeProfiles(root, new XElement(ns + name, value));
+            Save(doc, configPath);
+        }
+
+        /// <summary>Schreibt den Zeitplan (&lt;Schedule&gt;, vorher Sicherung).</summary>
+        public static void SetSchedule(string configPath, ScheduleDef schedule)
+        {
+            var doc = XDocument.Load(configPath, LoadOptions.PreserveWhitespace);
+            var root = doc.Root;
+            XNamespace ns = root.Name.Namespace;
+            var el = new XElement(ns + "Schedule",
+                new XAttribute("Enabled", schedule.Enabled ? "true" : "false"),
+                new XAttribute("Profile", schedule.Profile ?? ""),
+                new XAttribute("From", ScheduleDef.Format(schedule.From)),
+                new XAttribute("To", ScheduleDef.Format(schedule.To)));
+            var old = Child(root, "Schedule");
+            if (old != null) old.ReplaceWith(el);
+            else AddBeforeProfiles(root, el);
+            Save(doc, configPath);
+        }
+
+        private static void AddBeforeProfiles(XElement root, XElement el)
+        {
+            var profiles = Child(root, "DimmingProfiles");
+            if (profiles != null) profiles.AddBeforeSelf(el, new XText("\n\n  "));
+            else root.Add(new XText("  "), el, new XText("\n"));
         }
 
         private static void ReadActions(XElement list, List<ActionDef> target)

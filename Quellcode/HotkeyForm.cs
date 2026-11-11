@@ -106,7 +106,7 @@ namespace MonitorDimmer
     }
 
     /// <summary>Fenster zum Anzeigen und Ändern der Tastenkürzel.</summary>
-    internal sealed class HotkeyForm : Form
+    internal sealed class HotkeyForm : Form, ISettingsPage
     {
         private static Color CBack { get { return Theme.Map(Color.FromArgb(243, 243, 243)); } }
         private static Color CText { get { return Theme.Map(Color.FromArgb(27, 27, 27)); } }
@@ -120,7 +120,7 @@ namespace MonitorDimmer
         private readonly Func<string, string> _status;
         private readonly ModernButton _edit, _remove, _up, _down;
         private readonly Label _count;
-        private readonly Label _error;
+        private readonly string _initial; // Stand beim Öffnen, für HasChanges
         private int _sortColumn = -1;
         private bool _sortDescending;
         private float k = 1f;
@@ -132,6 +132,7 @@ namespace MonitorDimmer
             _config = config;
             _status = status;
             _items = config.Hotkeys.Select(h => new HotkeyDef { Keys = h.Keys, Action = h.Action, Profile = h.Profile }).ToList();
+            _initial = State();
 
             Text = "Monitor Dimmer - Tastenkürzel";
             if (icon != null) Icon = icon;
@@ -194,21 +195,10 @@ namespace MonitorDimmer
             tip.SetToolTip(_down, "Nach unten schieben");
             left.Controls.AddRange(new Control[] { add, _edit, _remove, _up, _down });
 
-            var right = new FlowLayoutPanel { Dock = DockStyle.Right, AutoSize = true, WrapContents = false, FlowDirection = FlowDirection.RightToLeft, BackColor = CBack, Padding = new Padding(0, S(16), 0, 0) };
-            // „Abbrechen“ links, „Speichern“ ganz rechts (globale Vorgabe)
-            var cancel = new ModernButton("Abbrechen", '\0', false, k) { DialogResult = DialogResult.Cancel };
-            var save = new ModernButton("Speichern", '\uE74E', true, k) { Margin = new Padding(0) };
-            save.Click += (s, e) => { if (Validate()) { DialogResult = DialogResult.OK; Close(); } };
-            // links neben den Knöpfen: rote Fehlerzeile, das Fenster bleibt dann offen
-            _error = new Label { AutoSize = true, ForeColor = Theme.Map(Color.FromArgb(196, 43, 28)), BackColor = CBack, MinimumSize = new Size(0, save.Height), TextAlign = ContentAlignment.MiddleRight, Margin = new Padding(0, 0, S(12), 0) };
-            right.Controls.Add(save);
-            right.Controls.Add(cancel);
-            right.Controls.Add(_error);
             actions.Controls.Add(left);
-            actions.Controls.Add(right);
-            ButtonRow.Fit(actions, left, right); // schmal: Knöpfe links nur mit Symbol, nichts liegt unter "Speichern"
+            ButtonRow.Fit(actions, left, null); // schmal: Knöpfe nur mit Symbol („Speichern“ und „Abbrechen“ hat das Hauptfenster)
 
-            var info = new InfoBanner("Solange dieses Fenster offen ist, sind die Tastenkürzel abgeschaltet.\n" +
+            var info = new InfoBanner("Solange diese Seite zu sehen ist, sind die Tastenkürzel abgeschaltet.\n" +
                 "Klick auf eine Spaltenüberschrift sortiert, die Pfeile verschieben den markierten Eintrag.", k) { Dock = DockStyle.Bottom };
 
             body.Controls.Add(card);
@@ -218,8 +208,6 @@ namespace MonitorDimmer
             Controls.Add(body);
             Controls.Add(head);
             Controls.Add(new SignatureFooter(k));
-            CancelButton = cancel;
-            AcceptButton = save;
             FillList();
             Load += (s, e) => WindowPlacement.Center(this);
             Theme.Apply(this);
@@ -376,16 +364,22 @@ namespace MonitorDimmer
             _list.Focus();
         }
 
-        private new bool Validate()
+        // ---------- ISettingsPage: das Hauptfenster speichert alle Seiten gemeinsam ----------
+
+        /// <summary>Alle Einträge als Text (Reihenfolge zählt mit), zum Vergleich mit dem Stand beim Öffnen.</summary>
+        private string State()
+        {
+            return string.Join("\n", _items.Select(h => h.Keys + "\t" + h.Action + "\t" + h.Profile));
+        }
+
+        public bool HasChanges { get { return State() != _initial; } }
+
+        public string CheckInput()
         {
             var dupes = _items.GroupBy(h => HotkeyActions.Normalize(h.Keys)).Where(g => g.Count() > 1).ToList();
             if (dupes.Count > 0)
-            {
-                _error.Text = "Mehrfach vergeben: " + string.Join(", ", dupes.Select(g => HotkeyActions.Display(g.First().Keys)));
-                return false;
-            }
-            _error.Text = "";
-            return true;
+                return "Mehrfach vergeben: " + string.Join(", ", dupes.Select(g => HotkeyActions.Display(g.First().Keys)));
+            return null;
         }
     }
 

@@ -107,7 +107,9 @@ namespace MonitorDimmer
             LogConfigSummary();
             ConfigBackup.Create(_configPath); // auch Änderungen von Hand landen so in den Sicherungen
 
-            _monitors = new MonitorManager();
+            // Handle-Nummern hängen fest am Monitor (Configurations\Monitore.ini), nicht an der Reihenfolge von Windows
+            _monitors = new MonitorManager(Path.Combine(dataDir, "Configurations", "Monitore.ini"));
+            _monitors.Smooth = _config.SmoothTransition;
             _monitors.Refresh();
             _events = new EventRunner(_resourcesDir);
 
@@ -115,6 +117,8 @@ namespace MonitorDimmer
             _tray.Icon = LoadIcon();
             _tray.ContextMenuStrip = new ContextMenuStrip();
             _sync = System.Threading.SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
+            // Monitor nimmt die Werte nicht an: kommt aus dem DDC-Thread, Hinweis im Infobereich
+            _monitors.Problem += text => _sync.Post(_ => { if (!_exiting) ShowBalloon(text, ToolTipIcon.Warning); }, null);
             _tray.ContextMenuStrip.Opening += (s, e) => BuildMenu();
             _tray.ContextMenuStrip.Opened += (s, e) => MenuHelper.RoundCorners(_tray.ContextMenuStrip);
             // Doppelklick auf das Symbol im Infobereich: Fenster mit der Spieleliste öffnen (ist es schon offen: nach vorn holen)
@@ -134,8 +138,10 @@ namespace MonitorDimmer
 
             _current = _config.Undimmed;
             _scriptProfile = _current;
-            _monitors.Apply(_current, "Programmstart");
+            ApplyMonitors(_current, "Programmstart");
             _gameExitTimer.Tick += (s, e) => CheckGameExit();
+            _scheduleTimer.Tick += (s, e) => CheckSchedule();
+            _scheduleTimer.Start();
 
             _watcher = new ForegroundWatcher();
             _watcher.Changed += OnForegroundChanged;
@@ -257,7 +263,7 @@ namespace MonitorDimmer
             var previous = _current;
             _current = target;
             Log.Info("Wechsel \"{0}\" -> \"{1}\" ({2})", previous.Name, target.Name, reason);
-            _monitors.Apply(target, reason);
+            ApplyMonitors(target, reason);
 
             bool automatic = _enforced == null;
             if (automatic && _config.UndimScriptsOnGameExit && target == _scriptProfile && !target.IsUndimmed)
@@ -333,7 +339,48 @@ namespace MonitorDimmer
 
         private void Reapply(string reason)
         {
-            if (_current != null && !_exiting) _monitors.Apply(_current, reason);
+            if (_current != null && !_exiting) ApplyMonitors(_current, reason);
+        }
+
+        // ================================================================== Zeitplan
+
+        private readonly Timer _scheduleTimer = new Timer { Interval = 30 * 1000 };
+        /// <summary>Profil, dessen Monitorwerte zuletzt gesetzt wurden (im Zeitraum des Zeitplans nicht _current).</summary>
+        private DimmingProfile _applied;
+
+        /// <summary>
+        /// Im Leerlauf (Automatik, kein Spiel) gelten im Zeitraum des Zeitplans die Monitorwerte seines Profils statt
+        /// "Ungedimmt". Nur die Monitorwerte: Aktionen und Skripte des Profils laufen nicht, der Zustand bleibt "Ungedimmt".
+        /// </summary>
+        private DimmingProfile Effective(DimmingProfile profile)
+        {
+            if (profile == null || !profile.IsUndimmed || _enforced != null) return profile;
+            var plan = _config.Schedule;
+            if (!plan.Enabled || !plan.Contains(DateTime.Now.TimeOfDay)) return profile;
+            var p = _config.Find(plan.Profile);
+            return p == null || p.IsUndimmed ? profile : p;
+        }
+
+        private void ApplyMonitors(DimmingProfile profile, string reason)
+        {
+            var effective = Effective(profile);
+            _applied = effective;
+            _monitors.Apply(effective, effective == profile ? reason : reason + ", Zeitplan");
+        }
+
+        /// <summary>Alle 30 s und nach dem Umschalten des Modus: Beginnt oder endet der Zeitraum, die Monitore neu setzen.</summary>
+        private void CheckSchedule()
+        {
+            if (_exiting || _current == null || Effective(_current) == _applied) return;
+            Log.Info("Zeitplan: Zeitraum {0}", _current.IsUndimmed && Effective(_current) != _current ? "beginnt" : "endet");
+            ApplyMonitors(_current, "Zeitplan");
+            UpdateTrayText();
+        }
+
+        /// <summary>Die Monitore sind gerade über den Zeitplan gedimmt.</summary>
+        private bool ScheduleDimmed
+        {
+            get { return _applied != null && !_applied.IsUndimmed && _current != null && _current.IsUndimmed; }
         }
 
         private void ScheduleReapply(bool refreshMonitors)
@@ -359,6 +406,7 @@ namespace MonitorDimmer
             _enforced = profile;
             Log.Info(profile == null ? "Automatik aktiviert" : "Profil \"{0}\" erzwungen", profile == null ? null : profile.Name);
             Evaluate(true);
+            CheckSchedule(); // erzwungenes "Ungedimmt" hebt den Zeitplan auf, Automatik schaltet ihn wieder ein
             UpdateTrayText();
         }
 
@@ -492,7 +540,8 @@ namespace MonitorDimmer
             _current = cfg.Find(_current.Name) ?? cfg.Undimmed;
             if (_scriptProfile != null) _scriptProfile = cfg.Find(_scriptProfile.Name) ?? cfg.Undimmed;
             if (_enforced != null) _enforced = cfg.Find(_enforced.Name);
-            _monitors.Apply(_current, "Konfiguration neu geladen");
+            _monitors.Smooth = cfg.SmoothTransition;
+            ApplyMonitors(_current, "Konfiguration neu geladen");
             if (!_hotkeysSuspended)
             {
                 _window.UnregisterAllHotkeys();
@@ -602,7 +651,7 @@ namespace MonitorDimmer
         private string StatusText()
         {
             string s;
-            if (_current == null || _current.IsUndimmed) s = "Ungedimmt";
+            if (_current == null || _current.IsUndimmed) s = ScheduleDimmed ? "Zeitplan: " + _applied.Title : "Ungedimmt";
             else s = _current.Title;
             if (_enforced != null) s += _enforced.IsUndimmed ? " (pausiert)" : " (erzwungen)";
             else if (_matchedBy != null && _current != null && !_current.IsUndimmed) s += " - " + _matchedBy;
@@ -651,7 +700,7 @@ namespace MonitorDimmer
                 Status = StatusText(),
                 Version = "v" + typeof(TrayApp).Assembly.GetName().Version
             };
-            bool dimmed = _current != null && !_current.IsUndimmed;
+            bool dimmed = (_current != null && !_current.IsUndimmed) || ScheduleDimmed;
             header.StatusColor = dimmed ? _theme.Accent
                 : _enforced != null ? Color.FromArgb(150, 150, 150)
                 : Color.FromArgb(34, 160, 80);
@@ -731,6 +780,7 @@ namespace MonitorDimmer
             games.ShortcutKeyDisplayString = HotkeyText("ShowGameList", null);
             menu.Items.Add(games);
             menu.Items.Add(Item("Aktionen...", MenuHelper.Actions, ShowActions));
+            menu.Items.Add(Item("Zeitplan...", MenuHelper.Clock, ShowSchedule));
             menu.Items.Add(Item("Tastenkürzel...", MenuHelper.Keyboard, ShowHotkeys));
             menu.Items.Add(new ToolStripSeparator());
 
@@ -753,11 +803,17 @@ namespace MonitorDimmer
             // Platz rechts für den Schalter: Windows reserviert die Breite des "Tastenkürzel"-Texts
             autostart.ShortcutKeyDisplayString = "\u2007\u2007\u2007\u2007\u2007\u2007";
             settings.DropDownItems.Add(autostart);
+            var smooth = Item("Sanft überblenden", MenuHelper.Brightness, ToggleSmooth);
+            smooth.IsToggle = true;
+            smooth.ToggleOn = _config.SmoothTransition;
+            smooth.ToolTipText = "Helligkeit beim Profilwechsel in mehreren Schritten ändern statt springen";
+            smooth.ShortcutKeyDisplayString = "\u2007\u2007\u2007\u2007\u2007\u2007";
+            settings.DropDownItems.Add(smooth);
             StyleDropDown(settings);
             menu.Items.Add(settings);
             menu.Items.Add(new ToolStripSeparator());
 
-            menu.Items.Add(Item("Beenden", MenuHelper.Power, ExitThread));
+            menu.Items.Add(Item("Beenden", MenuHelper.Power, Quit));
             MenuHelper.AddBottomSpacer(menu, _menuScale);
         }
 
@@ -846,7 +902,7 @@ namespace MonitorDimmer
         // ================================================================== Hauptfenster mit Navigation
 
         private MainWindow _main;
-        private PageDef _pageMonitors, _pageGames, _pageHotkeys, _pageActions;
+        private PageDef _pageMonitors, _pageGames, _pageHotkeys, _pageActions, _pageSchedule;
 
         /// <summary>Seiten des Hauptfensters (ein Fenster statt einzelner Fenster, wie Wake on LAN).</summary>
         private void CreatePages()
@@ -855,13 +911,13 @@ namespace MonitorDimmer
             _pageMonitors = new PageDef
             {
                 Text = "Monitore", Glyph = MenuHelper.Monitor,
-                Create = () => new MonitorForm(_monitors, () => _config, () => _current, icon())
+                Create = () => new MonitorForm(_monitors, () => _config, () => ScheduleDimmed ? _applied : _current, icon())
             };
             _pageGames = new PageDef
             {
                 Text = "Spieleliste", Glyph = MenuHelper.Game,
                 Create = () => new GameListForm(() => _config, SaveProcessList, SaveIgnoredFolders, icon()),
-                Done = (f, r) => r == DialogResult.OK ? "Spieleliste gespeichert." : null
+                Save = f => ((GameListForm)f).SaveAll()
             };
             _pageHotkeys = new PageDef
             {
@@ -871,13 +927,13 @@ namespace MonitorDimmer
                     string st;
                     return _hotkeyStatus.TryGetValue(keys, out st) ? st : null;
                 }, icon()),
-                // solange die Seite offen ist, sind die Tastenkürzel abgeschaltet
+                // solange die Seite zu sehen ist, sind die Tastenkürzel abgeschaltet
                 Opened = () =>
                 {
                     _hotkeysSuspended = true;
                     _window.UnregisterAllHotkeys();
                 },
-                Done = (f, r) => r == DialogResult.OK ? SaveHotkeys(((HotkeyForm)f).Result) : null,
+                Save = f => SaveHotkeys(((HotkeyForm)f).Result),
                 Closed = () =>
                 {
                     _hotkeysSuspended = false;
@@ -894,8 +950,21 @@ namespace MonitorDimmer
                     string select = _current != null && !_current.IsUndimmed ? _current.Name : (def != null ? def.Name : null);
                     return new ActionsForm(_config, _resourcesDir, select, icon());
                 },
-                Done = (f, r) => r == DialogResult.OK ? SaveActions((ActionsForm)f) : null
+                Save = f => SaveActions((ActionsForm)f)
             };
+            _pageSchedule = new PageDef
+            {
+                Text = "Zeitplan", Glyph = MenuHelper.Clock,
+                Create = () => new ScheduleForm(_config, icon()),
+                Save = f => SaveSchedule(((ScheduleForm)f).Result)
+            };
+        }
+
+        /// <summary>Beenden über das Menü bzw. die Navigation: bei ungespeicherten Änderungen im Fenster erst nachfragen.</summary>
+        private void Quit()
+        {
+            if (_main != null && !_main.IsDisposed && !_main.ConfirmDiscard()) return;
+            ExitThread();
         }
 
         private void OpenPage(PageDef page)
@@ -903,10 +972,10 @@ namespace MonitorDimmer
             if (_pageMonitors == null) CreatePages();
             if (_main == null || _main.IsDisposed)
             {
-                _main = new MainWindow(new List<PageDef> { _pageMonitors, _pageGames, _pageActions, _pageHotkeys },
+                _main = new MainWindow(new List<PageDef> { _pageMonitors, _pageGames, _pageActions, _pageSchedule, _pageHotkeys },
                     Icon.ExtractAssociatedIcon(Application.ExecutablePath),
                     ShowSettingsMenu,
-                    () => _sync.Post(_ => ExitThread(), null)); // "Beenden" erst nach dem Klick ausführen
+                    () => _sync.Post(_ => Quit(), null)); // "Beenden" erst nach dem Klick ausführen
                 _main.FormClosed += (s, e) => _main = null;
                 RefreshUpdateBar();
             }
@@ -917,6 +986,7 @@ namespace MonitorDimmer
         private void ShowGameList() { OpenPage(Pages().Item2); }
         private void ShowHotkeys() { OpenPage(Pages().Item3); }
         private void ShowActions() { OpenPage(Pages().Item4); }
+        private void ShowSchedule() { Pages(); OpenPage(_pageSchedule); }
         /// <summary>
         /// "Einstellungen" unten in der Navigation des Fensters: gleiche Einträge wie Tray-Menü > Einstellungen,
         /// als Menü rechts über dem Knopf (wie Wake on LAN).
@@ -939,6 +1009,11 @@ namespace MonitorDimmer
             autostart.ToggleOn = autoOn;
             autostart.ShortcutKeyDisplayString = "\u2007\u2007\u2007\u2007\u2007\u2007"; // Platz für den Schalter
             menu.Items.Add(autostart);
+            var smooth = mb.Item("Sanft überblenden", MenuHelper.Brightness, ToggleSmooth);
+            smooth.IsToggle = true;
+            smooth.ToggleOn = _config.SmoothTransition;
+            smooth.ShortcutKeyDisplayString = "\u2007\u2007\u2007\u2007\u2007\u2007";
+            menu.Items.Add(smooth);
             menu.Closed += (s, e) =>
             {
                 var w = anchor.FindForm() as MainWindow;
@@ -974,6 +1049,8 @@ namespace MonitorDimmer
             return Tuple.Create(_pageMonitors, _pageGames, _pageHotkeys, _pageActions);
         }
 
+        // Speichern der Seiten: Rückgabe null = gespeichert, sonst die Fehlermeldung (steht dann rot im Fenster)
+
         private string SaveHotkeys(List<HotkeyDef> hotkeys)
         {
             _configWatcher.EnableRaisingEvents = false;
@@ -982,13 +1059,56 @@ namespace MonitorDimmer
                 AppConfig.SetHotkeys(_configPath, hotkeys);
                 Log.Info("Tastenkürzel gespeichert ({0})", hotkeys.Count);
                 ReloadConfig(true);
-                return "Tastenkürzel gespeichert.";
+                return null;
             }
             catch (Exception ex)
             {
                 Log.Error("Tastenkürzel speichern: {0}", ex.Message);
-                ShowBalloon("Speichern fehlgeschlagen: " + ex.Message, ToolTipIcon.Error);
+                return "Tastenkürzel konnten nicht gespeichert werden: " + ex.Message;
+            }
+            finally
+            {
+                _configWatcher.EnableRaisingEvents = true;
+            }
+        }
+
+        private string SaveSchedule(ScheduleDef schedule)
+        {
+            _configWatcher.EnableRaisingEvents = false;
+            try
+            {
+                AppConfig.SetSchedule(_configPath, schedule);
+                Log.Info("Zeitplan gespeichert ({0})", schedule.Enabled
+                    ? ScheduleDef.Format(schedule.From) + " bis " + ScheduleDef.Format(schedule.To) + ", Profil " + schedule.Profile : "aus");
+                ReloadConfig(true);
                 return null;
+            }
+            catch (Exception ex)
+            {
+                Log.Error("Zeitplan speichern: {0}", ex.Message);
+                return "Zeitplan konnte nicht gespeichert werden: " + ex.Message;
+            }
+            finally
+            {
+                _configWatcher.EnableRaisingEvents = true;
+            }
+        }
+
+        /// <summary>Einstellungen > Sanft überblenden: gilt sofort (einzelner Schalter im Menü).</summary>
+        private void ToggleSmooth()
+        {
+            bool on = !_config.SmoothTransition;
+            _configWatcher.EnableRaisingEvents = false;
+            try
+            {
+                AppConfig.SetRootValue(_configPath, "SmoothTransition", on ? "true" : "false");
+                Log.Info("Sanft überblenden: {0}", on ? "an" : "aus");
+                ReloadConfig(true);
+            }
+            catch (Exception ex)
+            {
+                Log.Error("Einstellung speichern: {0}", ex.Message);
+                ShowBalloon("Einstellung konnte nicht gespeichert werden:\r\n" + ex.Message, ToolTipIcon.Error);
             }
             finally
             {
@@ -1004,13 +1124,12 @@ namespace MonitorDimmer
                 AppConfig.SetActions(_configPath, f.Result, f.RemoveHandlers);
                 Log.Info("Aktionen gespeichert");
                 ReloadConfig(true);
-                return "Aktionen gespeichert.";
+                return null;
             }
             catch (Exception ex)
             {
                 Log.Error("Aktionen speichern: {0}", ex.Message);
-                ShowBalloon("Aktionen konnten nicht gespeichert werden:\r\n" + ex.Message, ToolTipIcon.Error);
-                return null;
+                return "Aktionen konnten nicht gespeichert werden: " + ex.Message;
             }
             finally
             {
@@ -1174,7 +1293,7 @@ namespace MonitorDimmer
             // Beim Abmelden/Herunterfahren nur die Monitore zurücksetzen, keine Skripte starten.
             Log.Info("Windows wird abgemeldet/heruntergefahren");
             _exiting = true;
-            if (_current != null && !_current.IsUndimmed)
+            if ((_current != null && !_current.IsUndimmed) || ScheduleDimmed)
                 _monitors.ApplySync(_config.Undimmed, "Windows wird beendet", 3000);
         }
 
@@ -1185,9 +1304,10 @@ namespace MonitorDimmer
                 _exiting = true;
                 Log.Info("Programm wird beendet");
                 _gameExitTimer.Stop();
-                if (_current != null && !_current.IsUndimmed)
+                if ((_current != null && !_current.IsUndimmed) || ScheduleDimmed)
                 {
                     _current = _config.Undimmed;
+                    _applied = _current;
                     _monitors.ApplySync(_config.Undimmed, "Programmende", 5000);
                 }
                 if (_scriptProfile != null && !_scriptProfile.IsUndimmed)
@@ -1213,13 +1333,14 @@ namespace MonitorDimmer
 
         private void Cleanup()
         {
-            try { if (_main != null && !_main.IsDisposed) _main.Close(); } catch { } // offene Seite verwerfen
+            try { if (_main != null && !_main.IsDisposed) _main.ForceClose(); } catch { } // ohne Rückfrage (Programmende)
             SystemEvents.SessionEnding -= OnSessionEnding;
             try { _configWatcher.EnableRaisingEvents = false; _configWatcher.Dispose(); } catch { }
             _undimTimer.Stop();
             _reapplyTimer.Stop();
             _reloadTimer.Stop();
             _gameExitTimer.Stop();
+            _scheduleTimer.Stop();
             _updateTimer.Stop();
             ForgetGame();
             if (_watcher != null) _watcher.Dispose();

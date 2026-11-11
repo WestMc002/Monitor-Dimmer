@@ -5,6 +5,17 @@ Aktuelle Version: siehe Info-Fenster (Klick auf die Versionsnummer) bzw.
 Eigenschaften > Details der EXE. Vorgänger: Monitor Dimmer 1.3.2017.0120
 
 Versionen:
+  2.68.2026.1111 "Speichern" und "Abbrechen" gelten für alle Seiten
+                 gemeinsam (Seitenwechsel verwirft nichts); Rückfrage beim
+                 Schließen mit ungespeicherten Änderungen
+  2.66.2026.1111 Zeitplan: im Leerlauf zu festen Zeiten dimmen (neue Seite);
+                 Helligkeit wird sanft übergeblendet (Einstellungen >
+                 Sanft überblenden); jeder Monitor behält seine Handle-
+                 Nummer, auch wenn Windows die Reihenfolge ändert oder ein
+                 Monitor fehlt; Hinweis, wenn ein Monitor nicht reagiert;
+                 Suchfeld in der Spieleliste; Eingabefelder im Stil der
+                 Auswahlfelder; Tooltips kompakter und 15 s sichtbar;
+                 Meldung nach dem Speichern 4 s
   2.64.2026.1109 Navigation und Tray-Menü: Aktionen vor Tastenkürzel
   2.62.2026.1109 Tooltips im Programmdesign (hell/dunkel, passend zu den Karten)
   2.61.2026.1109 Einstellungen, Sicherungen und Protokolle liegen jetzt unter
@@ -139,8 +150,28 @@ ERSTER START
 
 WAS IST NEU
 -----------
-- Ein Fenster für alles: Monitore, Spieleliste, Aktionen und Tastenkürzel
-  sind Seiten mit Navigation links. Die Einträge im Tray-Menü öffnen das
+- Zeitplan (Seite "Zeitplan"): In einem Zeitraum, z. B. 20:00 bis 07:00
+  Uhr, bekommen die Monitore im Leerlauf die Werte eines Profils statt
+  "Ungedimmt". Das gilt, solange die Automatik aktiv ist und kein Spiel
+  läuft; Aktionen des Profils laufen dabei nicht. "Deaktiviert
+  (Ungedimmt)" im Menü hebt den Zeitplan auf. In der Konfiguration:
+  <Schedule Enabled="true" Profile="..." From="20:00" To="07:00" />
+- Sanftes Überblenden: Die Helligkeit wechselt in mehreren Schritten statt
+  zu springen. Abschaltbar unter Einstellungen > Sanft überblenden
+  (<SmoothTransition> in der Konfiguration), z. B. wenn ein Monitor dabei
+  flackert oder träge reagiert.
+- Feste Monitor-Nummern: Die Handle-Nummer hängt jetzt am Monitor (Typ und
+  Anschluss) und nicht mehr an der Reihenfolge, in der Windows die
+  Monitore aufzählt. Fehlt ein Monitor oder zählt Windows nach einem
+  Treiber-Update anders, behalten die übrigen ihre Nummer und bekommen
+  weiter die richtigen Werte. Die Zuordnung steht in
+  Configurations\Monitore.ini; wird die Datei gelöscht, legt das Programm
+  sie beim nächsten Start in der aktuellen Reihenfolge neu an.
+- Reagiert ein Monitor nicht auf die Werte (DDC/CI aus?), erscheint ein
+  Hinweis im Infobereich - einmal, bis der Monitor wieder reagiert.
+- Spieleliste: Suchfeld über der Liste (Spielname oder Pfad).
+- Ein Fenster für alles: Monitore, Spieleliste, Aktionen, Zeitplan und
+  Tastenkürzel sind Seiten mit Navigation links. Die Einträge im Tray-Menü öffnen das
   Fenster direkt auf der passenden Seite, ein Doppelklick auf das
   Tray-Symbol mit der Spieleliste. Das Info-Fenster bleibt ein kleines
   Fenster (Klick auf die Versionsnummer).
@@ -148,10 +179,13 @@ WAS IST NEU
   Stecknadel anpinnen (gespeichert in Configurations\Fenster.ini). Unten
   in der Navigation öffnet "Einstellungen" dieselben Einträge wie im
   Tray-Menü (Konfiguration, Sicherungen, Protokoll, Programmordner, Info,
-  Mit Windows starten); "Beenden" beendet das Programm ganz. Speichern und Abbrechen
-  gelten je Seite; ein Wechsel über die Navigation und das Schließen des
-  Fensters verwerfen nicht gespeicherte Änderungen. Das Programm läuft nach
-  dem Schließen im Infobereich weiter.
+  Mit Windows starten); "Beenden" beendet das Programm ganz.
+  "Speichern" und "Abbrechen" stehen einmal unten im Fenster und gelten
+  für alle Seiten: Ein Seitenwechsel verwirft nichts, die Änderungen
+  werden über alle Seiten gesammelt und gemeinsam gespeichert. Wer das
+  Fenster mit ungespeicherten Änderungen schließt oder das Programm
+  beendet, wird gefragt ("Änderungen verwerfen?"). Das Programm läuft
+  nach dem Schließen im Infobereich weiter.
 - Tray-Menü:
   * Modernes Menü im Windows-11-Stil (runde Ecken, Symbole, Status oben,
     folgt dem hellen/dunklen Windows-Design, zeigt die Tastenkürzel an)

@@ -7,6 +7,8 @@ Sobald ein Spiel aus der Spieleliste im Vordergrund läuft, wendet Monitor Dimme
 
 Neuentwicklung des Monitor Dimmer 1.3 aus dem Jahr 2017; dessen Konfigurationsformat wird weiter gelesen.
 
+> **English:** Monitor Dimmer is a small Windows tray tool that dims your secondary monitors (brightness and contrast via DDC/CI) while a game is in the foreground and restores them afterwards. It can also dim on a schedule (e.g. in the evening) and run actions such as closing programs or switching the power plan. The user interface is in German.
+
 | Hell | Dunkel |
 |---|---|
 | ![Tray-Menü hell](Screenshots/hell.png) | ![Tray-Menü dunkel](Screenshots/dunkel.png) |
@@ -18,6 +20,7 @@ Neuentwicklung des Monitor Dimmer 1.3 aus dem Jahr 2017; dessen Konfigurationsfo
 |---|---|
 | ![Spieleliste hell](Screenshots/spieleliste-hell.png) | ![Spieleliste dunkel](Screenshots/spieleliste-dunkel.png) |
 | ![Aktionen hell](Screenshots/aktionen-hell.png) | ![Aktionen dunkel](Screenshots/aktionen-dunkel.png) |
+| ![Zeitplan hell](Screenshots/zeitplan-hell.png) | ![Zeitplan dunkel](Screenshots/zeitplan-dunkel.png) |
 | ![Tastenkürzel hell](Screenshots/tastenkuerzel-hell.png) | ![Tastenkürzel dunkel](Screenshots/tastenkuerzel-dunkel.png) |
 | ![Monitore hell](Screenshots/monitore-hell.png) | ![Monitore dunkel](Screenshots/monitore-dunkel.png) |
 | ![Info hell](Screenshots/info-hell.png) | ![Info dunkel](Screenshots/info-dunkel.png) |
@@ -29,11 +32,13 @@ Die Screenshots zeigen erfundene Beispieldaten. Sie entstehen automatisch beim E
 
 - **Profile** – je Profil Helligkeit und Kontrast für jeden Monitor, z. B. „alle gedimmt“, „rechter Monitor heller“, „VR“
 - **Automatik** – erkennt das Spiel im Vordergrund; kurzes Alt+Tab oder Overlays dimmen nicht sofort wieder hoch (einstellbare Verzögerung)
-- **Spieleliste** – Spiele je Profil mit Icon und Status, Platzhalter `*` und `?`, Suche nach neuen und fehlenden Spielen, Spiel im Vordergrund per Menü oder Tastenkürzel hinzufügen
+- **Zeitplan** – dimmt im Leerlauf zu festen Zeiten, z. B. abends von 20:00 bis 07:00 Uhr
+- **Sanftes Überblenden** – die Helligkeit wechselt in mehreren Schritten statt zu springen (abschaltbar unter Einstellungen)
+- **Spieleliste** – Spiele je Profil mit Icon und Status, Suchfeld, Platzhalter `*` und `?`, Suche nach neuen und fehlenden Spielen, Spiel im Vordergrund per Menü oder Tastenkürzel hinzufügen
 - **Aktionen** – beim Aktivieren und Deaktivieren eines Profils: Programme beenden und wieder starten, Dienste stoppen und starten, Energiesparplan, Standard-Audiogerät, geplante Aufgaben, Befehle; Prüfung auf fehlende Programme
 - **Tastenkürzel** – global, frei belegbar (Pause, Automatik, Profil erzwingen, erneut anwenden …)
-- **Monitore** – grafische Übersicht mit Anordnung und aktuellen Werten
-- **Ein Fenster** – Monitore, Spieleliste, Aktionen und Tastenkürzel als Seiten mit Navigation (Doppelklick auf das Tray-Symbol); Speichern und Abbrechen je Seite
+- **Monitore** – grafische Übersicht mit Anordnung und aktuellen Werten; jeder Monitor behält seine Nummer, auch wenn Windows die Reihenfolge ändert oder ein Monitor fehlt; Hinweis, wenn ein Monitor nicht reagiert
+- **Ein Fenster** – Monitore, Spieleliste, Aktionen, Zeitplan und Tastenkürzel als Seiten mit Navigation (Doppelklick auf das Tray-Symbol); Speichern und Abbrechen gelten für alle Seiten gemeinsam, Rückfrage bei ungespeicherten Änderungen
 - **Sicherheit** – beim Beenden, Abmelden und nach Abstürzen werden die Monitore entdimmt; die Konfiguration wird vor jedem Speichern versioniert gesichert
 - **Autostart** – mit Adminrechten über die Aufgabenplanung, ohne UAC-Abfrage bei jeder Anmeldung
 - **Updates** – sieht höchstens einmal am Tag unter Releases nach einer neuen Version; Installation mit einem Klick im Tray-Menü (Konfiguration bleibt erhalten, abschaltbar im Info-Fenster)
@@ -42,7 +47,7 @@ Die Screenshots zeigen erfundene Beispieldaten. Sie entstehen automatisch beim E
 
 1. Unter [Releases](../../releases) die neueste `Monitor-Dimmer-<Version>.zip` herunterladen.
 2. `Monitor Dimmer.exe` (und `Liesmich.txt`) in einen eigenen Ordner entpacken, z. B. `C:\Tools\Monitor Dimmer` oder `C:\Program Files\Monitor Dimmer`.
-3. Starten. Einstellungen und Protokoll legt das Programm unter `%LOCALAPPDATA%\Monitor Dimmer` an (`Configurations` und `TraceLogs`).
+3. Starten. Beim ersten Start warnt Windows möglicherweise („Der Computer wurde durch Windows geschützt“), weil die EXE nicht signiert ist: auf „Weitere Informationen“ und dann „Trotzdem ausführen“ klicken. Einstellungen und Protokoll legt das Programm unter `%LOCALAPPDATA%\Monitor Dimmer` an (`Configurations` und `TraceLogs`).
 4. Im Tray-Menü unter „Monitore anzeigen …“ prüfen, welche Nummer zu welchem Monitor gehört, und die Profile anpassen.
 
 Voraussetzungen: Windows 10 oder 11 (.NET Framework 4 ist dort vorhanden) und Monitore, die DDC/CI unterstützen (meist im Monitormenü einschaltbar).

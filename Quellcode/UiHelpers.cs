@@ -327,6 +327,131 @@ namespace MonitorDimmer
     }
 
     /// <summary>
+    /// Eingabefeld im Stil der Auswahlfelder (Windows 11): gleiche Höhe (32 Einheiten), runder Rahmen, unten eine
+    /// dunklere Linie, bei Fokus 2 Einheiten in Akzentfarbe. Innen sitzt ein randloses Textfeld. Optional mit Lupe
+    /// rechts (Suchfeld) und grauem Hinweistext, solange das Feld leer ist.
+    /// </summary>
+    internal sealed class ModernTextBox : Control
+    {
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        private static extern IntPtr SendMessage(IntPtr hwnd, int msg, IntPtr wParam, string lParam);
+
+        private readonly TextBox _box = new TextBox { BorderStyle = BorderStyle.None };
+        private readonly float _k;
+        private string _cue = "";
+        private bool _search;
+
+        public ModernTextBox(float k)
+        {
+            _k = k;
+            SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
+            SetStyle(ControlStyles.Selectable, false);
+            Font = new Font("Segoe UI", 9.5f);
+            _box.Font = Font;
+            _box.BackColor = ModernCombo.FieldBack(false);
+            _box.ForeColor = Ui.Text;
+            Size = new Size((int)Math.Round(180 * k), (int)Math.Round(32 * k));
+            Cursor = Cursors.IBeam;
+            Controls.Add(_box);
+            _box.GotFocus += (s, e) => Invalidate();
+            _box.LostFocus += (s, e) => Invalidate();
+            _box.TextChanged += (s, e) => OnTextChanged(e);
+            _box.HandleCreated += (s, e) => ApplyCue();
+            Click += (s, e) => _box.Focus();
+        }
+
+        public override string Text
+        {
+            get { return _box.Text; }
+            set { _box.Text = value; }
+        }
+
+        /// <summary>Grauer Hinweistext im leeren Feld, z. B. "Suchen".</summary>
+        public string CueText
+        {
+            get { return _cue; }
+            set { _cue = value ?? ""; ApplyCue(); }
+        }
+
+        /// <summary>Lupe rechts im Feld.</summary>
+        public bool SearchIcon
+        {
+            get { return _search; }
+            set { _search = value; PerformLayout(); Invalidate(); }
+        }
+
+        public int MaxLength { get { return _box.MaxLength; } set { _box.MaxLength = value; } }
+        public HorizontalAlignment TextAlign { get { return _box.TextAlign; } set { _box.TextAlign = value; } }
+
+        public new bool Focus() { return _box.Focus(); }
+
+        /// <summary>Tooltip für das ganze Feld (Rahmen und Textfeld).</summary>
+        public void SetTip(ToolTip tip, string text)
+        {
+            tip.SetToolTip(this, text);
+            tip.SetToolTip(_box, text);
+        }
+
+        private void ApplyCue()
+        {
+            if (_box.IsHandleCreated) SendMessage(_box.Handle, 0x1501 /* EM_SETCUEBANNER */, (IntPtr)1, _cue);
+        }
+
+        protected override void OnLayout(LayoutEventArgs e)
+        {
+            base.OnLayout(e);
+            int left = (int)Math.Round(10 * _k);
+            int right = _search ? (int)Math.Round(32 * _k) : left;
+            _box.SetBounds(left, Math.Max(1, (Height - _box.Height) / 2), Math.Max(10, Width - left - right), _box.Height);
+        }
+
+        protected override void OnEnabledChanged(EventArgs e)
+        {
+            base.OnEnabledChanged(e);
+            Invalidate();
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            var g = e.Graphics;
+            Color parentBack = Parent != null ? Parent.BackColor : Ui.Card;
+            Color back = ModernCombo.FieldBack(false);
+            Color border = Theme.Dark ? Color.FromArgb(70, 70, 70) : Color.FromArgb(229, 229, 229);
+            Color bottom = Theme.Dark ? Color.FromArgb(100, 100, 100) : Color.FromArgb(200, 200, 200);
+            // Farben des Textfelds dem Design nachführen (hell/dunkel)
+            if (_box.BackColor != back) _box.BackColor = back;
+            if (_box.ForeColor != Ui.Text) _box.ForeColor = Ui.Text;
+
+            g.Clear(parentBack);
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            var rect = new RectangleF(0.5f, 0.5f, Width - 1f, Height - 1f);
+            using (var path = MonitorForm.Rounded(rect, 4 * _k))
+            {
+                using (var b = new SolidBrush(back)) g.FillPath(b, path);
+                using (var p = new Pen(border)) g.DrawPath(p, path);
+                // Linie unten wie beim Auswahlfeld: dunkler, bei Fokus 2 Einheiten in Akzentfarbe
+                var oldClip = g.Clip;
+                g.SetClip(path);
+                bool focus = _box.Focused;
+                float lh = focus ? Math.Max(2f, 2 * _k) : 1f;
+                using (var b = new SolidBrush(focus ? Ui.Primary : bottom))
+                    g.FillRectangle(b, 0, Height - lh, Width, lh);
+                g.Clip = oldClip;
+            }
+            g.SmoothingMode = SmoothingMode.Default;
+
+            if (!_search) return;
+            string iconFont = MenuHelper.IconFont();
+            if (iconFont.Length == 0) return;
+            int btn = (int)Math.Round(32 * _k);
+            Color muted = Enabled ? Ui.Muted : Theme.Map(Color.FromArgb(157, 157, 157));
+            using (var f = new Font(iconFont, 12 * _k, GraphicsUnit.Pixel))
+                TextRenderer.DrawText(g, "", f, new Rectangle(Width - btn, 0, btn, Height), muted,
+                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding | TextFormatFlags.SingleLine);
+        }
+    }
+
+    /// <summary>
     /// Zeichnet Auswahl- und Eingabelisten (ComboBox) im Windows-11-Stil: abgerundetes Feld mit feinem Rahmen,
     /// Chevron-Symbol rechts, Akzent-Linie unten bei Fokus, abgerundete Aufklappliste.
     /// </summary>
@@ -549,7 +674,7 @@ namespace MonitorDimmer
                     var buttons = left.Controls.OfType<ModernButton>().Where(b => texts.ContainsKey(b)).ToList();
                     foreach (var b in buttons)
                         if (b.Text != texts[b]) { b.Text = texts[b]; tip.SetToolTip(b, null); }
-                    int avail = row.ClientSize.Width - right.Width - left.Padding.Horizontal;
+                    int avail = row.ClientSize.Width - (right != null ? right.Width : 0) - left.Padding.Horizontal;
                     for (int i = buttons.Count - 1; i >= 1 && Needed(left) > avail; i--)
                     {
                         var b = buttons[i];
@@ -560,7 +685,7 @@ namespace MonitorDimmer
                 finally { busy = false; }
             };
             row.Resize += fit;
-            right.Resize += fit;
+            if (right != null) right.Resize += fit;
             fit(row, EventArgs.Empty);
         }
 

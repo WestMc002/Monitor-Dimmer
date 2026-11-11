@@ -435,6 +435,8 @@ namespace MonitorDimmer
         public const char Unpin = '\uE77A';
         public const char Completed = '\uE930';
         public const char Warning = '\uE7BA';
+        public const char Clock = '\uE823';      // Zeitplan
+        public const char Brightness = '\uE706'; // Sanft überblenden
         public const char Auto = '';
 
         internal static string IconFont()

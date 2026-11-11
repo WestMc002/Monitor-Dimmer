@@ -27,7 +27,7 @@ namespace MonitorDimmer
     }
 
     /// <summary>Spieleliste je Profil anzeigen, prüfen und bearbeiten.</summary>
-    internal sealed class GameListForm : Form
+    internal sealed class GameListForm : Form, ISettingsPage
     {
         private static Color CBack { get { return Theme.Map(Color.FromArgb(243, 243, 243)); } }
         private static Color CText { get { return Theme.Map(Color.FromArgb(27, 27, 27)); } }
@@ -47,7 +47,10 @@ namespace MonitorDimmer
         private readonly ImageList _icons;
         private readonly ModernButton _moveButton;
         private readonly ModernButton _searchButton;
-        private readonly Label _error;
+        private readonly ModernTextBox _filter;
+        /// <summary>Alle fehlenden Einträge des Profils, auch wenn das Suchfeld sie gerade ausblendet.</summary>
+        private readonly List<string> _missingAll = new List<string>();
+
         // Änderungen werden gesammelt und erst mit "Speichern" übernommen (globale Vorgabe Einstellungsseiten)
         private readonly Dictionary<string, List<string>> _pending = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
         private readonly List<string> _pendingIgnore = new List<string>();
@@ -117,11 +120,18 @@ namespace MonitorDimmer
             _profile = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = S(360), Font = new Font("Segoe UI", 9.5f), Anchor = AnchorStyles.Top | AnchorStyles.Right };
             _profile.SelectedIndexChanged += (s, e) => FillList();
             var lbl = new Label { Text = "Profil", ForeColor = CMuted, AutoSize = true, Font = new Font("Segoe UI", 10f), Anchor = AnchorStyles.Top | AnchorStyles.Right, BackColor = Color.Transparent };
-            cardHead.Controls.AddRange(new Control[] { title, _summary, lbl, _profile });
+            // Suchfeld: zeigt nur Einträge, deren Spielname oder Pfad den Text enthält
+            // (gleicher Rahmen und gleiche Höhe wie das Auswahlfeld „Profil“ daneben, mit Lupe)
+            _filter = new ModernTextBox(k) { Width = S(220), Anchor = AnchorStyles.Top | AnchorStyles.Right, SearchIcon = true, CueText = "Suchen" };
+            _filter.TextChanged += (s, e) => FillList();
+            _filter.SetTip(new ModernToolTip(), "Nur Einträge zeigen, deren Spielname oder Pfad den Text enthält");
+            cardHead.Controls.AddRange(new Control[] { _filter, title, _summary, lbl, _profile }); // Suchfeld liegt bei wenig Platz über der Zählung
             cardHead.Layout += (s, e) =>
             {
                 _profile.Location = new Point(cardHead.Width - _profile.Width, S(8));
                 lbl.Location = new Point(_profile.Left - lbl.Width - S(10), S(12));
+                _filter.Height = _profile.Height;
+                _filter.Location = new Point(lbl.Left - _filter.Width - S(24), _profile.Top);
                 _summary.Left = title.Right + S(16);
             };
 
@@ -163,19 +173,8 @@ namespace MonitorDimmer
             var open = new ModernButton("Ordner öffnen", '\uE838', false, k) { Tag = "sel" };
             open.Click += (s, e) => OpenFolder();
             buttons.Controls.AddRange(new Control[] { add, remove, _moveButton, removeMissing, open });
-            // Speichern (primär), rechts daneben Abbrechen; links davon die rote Fehlerzeile
-            var right = new FlowLayoutPanel { Dock = DockStyle.Right, AutoSize = true, WrapContents = false, FlowDirection = FlowDirection.RightToLeft, BackColor = CBack, Padding = new Padding(0, S(16), 0, 0) };
-            var cancel = new ModernButton("Abbrechen", '\0', false, k);
-            var saveButton = new ModernButton("Speichern", '\uE74E', true, k) { Margin = new Padding(0) };
-            _error = new Label { AutoSize = true, ForeColor = CMissing, BackColor = CBack, MinimumSize = new Size(0, saveButton.Height), TextAlign = ContentAlignment.MiddleRight, Margin = new Padding(0, 0, S(12), 0) };
-            right.Controls.Add(saveButton); // „Abbrechen“ links, „Speichern“ ganz rechts
-            right.Controls.Add(cancel);
-            right.Controls.Add(_error);
-            cancel.Click += (s, e) => Close(); // verwirft alle Änderungen
-            saveButton.Click += (s, e) => SaveAll();
             actions.Controls.Add(buttons);
-            actions.Controls.Add(right);
-            ButtonRow.Fit(actions, buttons, right); // schmal: Knöpfe links nur mit Symbol, nichts liegt unter "Speichern"
+            ButtonRow.Fit(actions, buttons, null); // schmal: Knöpfe nur mit Symbol („Speichern“ und „Abbrechen“ hat das Hauptfenster)
 
             // ---------- Hinweis ----------
             var info = new InfoBanner("Änderungen werden erst mit „Speichern“ übernommen – alphabetisch sortiert, ohne Doppelte und mit vorheriger Sicherung (Einstellungen > Sicherungen öffnen).\n" +
@@ -188,9 +187,6 @@ namespace MonitorDimmer
             Controls.Add(body);
             Controls.Add(head);
             Controls.Add(new SignatureFooter(k));
-            CancelButton = cancel;
-            AcceptButton = saveButton;
-
             Reload();
             Resize += (s, e) => StretchPathColumn();
             Load += (s, e) => FitWindowWidth();
@@ -316,12 +312,17 @@ namespace MonitorDimmer
             _list.Items.Clear();
             if (p == null) { _list.EndUpdate(); return; }
 
-            int found = 0, missing = 0;
+            int found = 0, missing = 0, shown = 0;
+            string filter = _filter == null ? "" : _filter.Text.Trim();
+            _missingAll.Clear();
             foreach (var pat in p.Patterns.OrderBy(x => GameName(x.Expanded), StringComparer.CurrentCultureIgnoreCase))
             {
                 var e = new Entry { Raw = pat.Raw, State = Check(pat) };
                 if (e.State == EntryState.Found) found++;
-                if (e.State == EntryState.Missing) missing++;
+                if (e.State == EntryState.Missing) { missing++; _missingAll.Add(pat.Raw); }
+                if (filter.Length > 0 && GameName(pat.Expanded).IndexOf(filter, StringComparison.CurrentCultureIgnoreCase) < 0
+                    && pat.Raw.IndexOf(filter, StringComparison.CurrentCultureIgnoreCase) < 0) continue;
+                shown++;
 
                 string status;
                 Color color;
@@ -345,7 +346,8 @@ namespace MonitorDimmer
             }
             _list.EndUpdate();
             FitColumns();
-            _summary.Text = string.Format("{0} Einträge   ·   {1} gefunden   ·   {2} fehlen", p.Patterns.Count, found, missing);
+            _summary.Text = string.Format("{0} Einträge   ·   {1} gefunden   ·   {2} fehlen", p.Patterns.Count, found, missing)
+                + (filter.Length > 0 ? "   ·   " + shown + " angezeigt" : "");
             _summary.ForeColor = missing > 0 ? CMissing : CMuted;
             UpdateButtons();
         }
@@ -470,12 +472,17 @@ namespace MonitorDimmer
         private void Save(string profileName, List<string> paths)
         {
             _pending[profileName] = paths.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-            _error.Text = "";
             Reload();
         }
 
-        /// <summary>Alle gesammelten Änderungen speichern; bei einem Fehler bleibt das Fenster offen.</summary>
-        private void SaveAll()
+        // ---------- ISettingsPage: das Hauptfenster speichert alle Seiten gemeinsam ----------
+
+        public bool HasChanges { get { return _pending.Count > 0 || _pendingIgnore.Count > 0; } }
+
+        public string CheckInput() { return null; }
+
+        /// <summary>Alle gesammelten Änderungen speichern; Rückgabe null = gespeichert, sonst die Fehlermeldung.</summary>
+        public string SaveAll()
         {
             try
             {
@@ -488,12 +495,10 @@ namespace MonitorDimmer
             }
             catch (Exception ex)
             {
-                _error.Text = "Speichern fehlgeschlagen: " + ex.Message;
                 Reload();
-                return;
+                return "Speichern fehlgeschlagen: " + ex.Message;
             }
-            DialogResult = DialogResult.OK;
-            Close();
+            return null;
         }
 
         private void AddGame()
@@ -532,7 +537,7 @@ namespace MonitorDimmer
         {
             var p = CurrentProfile;
             if (p == null) return;
-            var missing = _list.Items.Cast<ListViewItem>().Select(i => (Entry)i.Tag).Where(x => x.State == EntryState.Missing).Select(x => x.Raw).ToList();
+            var missing = _missingAll.ToList(); // alle fehlenden, auch vom Suchfeld ausgeblendete
             var cfg = _config();
             var roots = GameScan.Roots(cfg, missing);
             if (roots.Count == 0)
@@ -586,7 +591,7 @@ namespace MonitorDimmer
         {
             var p = CurrentProfile;
             if (p == null) return;
-            var missing = _list.Items.Cast<ListViewItem>().Select(i => (Entry)i.Tag).Where(e => e.State == EntryState.Missing).Select(e => e.Raw).ToList();
+            var missing = _missingAll.ToList(); // alle fehlenden, auch vom Suchfeld ausgeblendete
             if (missing.Count == 0)
             {
                 MessageBox.Show(this, "Alle Programme in diesem Profil sind vorhanden.", Text, MessageBoxButtons.OK, MessageBoxIcon.Information);
