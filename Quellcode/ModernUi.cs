@@ -622,6 +622,7 @@ namespace MonitorDimmer
     {
         private static AboutDialog _open;
         private readonly float k;
+        private CardPanel _card; // Karte mit den Eckdaten (wächst mit aufgeklappten „Details“)
         /// <summary>Bereich „Updates“ (vom Tray-Programm gesetzt; in den Screenshots nicht vorhanden).</summary>
         public static UpdateHooks Updates;
 
@@ -695,9 +696,13 @@ namespace MonitorDimmer
                 Auto = () => true,
                 SetAuto = on => { },
                 CheckNow = () => System.Threading.Tasks.Task.FromResult(new UpdateStatus(UpdateKind.Current, "Aktuell", today)),
-                CanInstall = () => false
+                CanInstall = () => false,
+                AutoInstall = () => false,
+                SetAutoInstall = on => { }
             } : Updates;
-            var card = new CardPanel(k) { Location = new Point(S(24), y), Size = new Size(W - S(48), S(140) + (updates != null ? S(60) + S(32) : 0)) };
+            // Karte: vier Zeilen à 26 + Rand, dazu „Updates“ (49), „Automatisch prüfen“ (32), „Automatisch aktualisieren“ (32)
+            var card = new CardPanel(k) { Location = new Point(S(24), y), Size = new Size(W - S(48), S(140) + (updates != null ? S(49) + S(32) + (updates.AutoInstall != null ? S(32) : 0) : 0)) };
+            _card = card;
             var table = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, BackColor = Ui.Card };
             table.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, S(118)));
             table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
@@ -776,15 +781,36 @@ namespace MonitorDimmer
         }
 
         /// <summary>
-        /// Updates (wie Fensterpositionen): Symbol und Stand (zweite Zeile: letzte Prüfung), rechts ein kleiner Knopf
-        /// ("Jetzt prüfen", bei neuer Version "Aktualisieren"), darunter der Schalter für die automatische Prüfung.
+        /// Karte um d Pixel höher oder niedriger (aufgeklappte „Details“): alles darunter und das Fenster rücken mit.
+        /// Die feste Fenstergröße (MinimumSize = MaximumSize) vorher lösen und danach neu setzen.
+        /// </summary>
+        private void GrowCard(int d)
+        {
+            if (_card == null || d == 0) return;
+            bool locked = MinimumSize == MaximumSize && MinimumSize != Size.Empty;
+            MinimumSize = Size.Empty;
+            MaximumSize = Size.Empty;
+            int bottom = _card.Bottom;
+            foreach (Control c in Controls) if (c != _card && c.Top >= bottom) c.Top += d;
+            _card.Height += d;
+            ClientSize = new Size(ClientSize.Width, ClientSize.Height + d);
+            if (locked) { MinimumSize = Size; MaximumSize = Size; }
+        }
+
+        /// <summary>
+        /// Zeile „Updates“ nach globaler Vorgabe (Referenz: Dock Pilot): Raster wie die Zeilen darüber, Symbol und Überschrift,
+        /// darunter eine kurze zweite Zeile (bei Fehlern mit aufklappbaren „Details“), Knopf rechts neben beiden Zeilen;
+        /// zwei Zeilenabstände tiefer „Automatisch prüfen“ mit Schalter.
         /// </summary>
         private void AddUpdateRows(TableLayoutPanel t, UpdateHooks updates)
         {
             int row = t.RowCount;
-            t.RowCount = row + 2;
-            t.RowStyles.Add(new RowStyle(SizeType.Absolute, S(60))); // etwas Luft über dem Knopf und unter der zweiten Zeile
+            bool withInstall = updates.AutoInstall != null;
+            t.RowCount = row + (withInstall ? 3 : 2);
+            var rowStyle = new RowStyle(SizeType.Absolute, S(49)); // uy … uy + S(49): Überschrift, zweite Zeile, ggf. Details
+            t.RowStyles.Add(rowStyle);
             t.RowStyles.Add(new RowStyle(SizeType.Absolute, S(32)));
+            if (withInstall) t.RowStyles.Add(new RowStyle(SizeType.Absolute, S(32)));
             t.Controls.Add(new Label
             {
                 Text = "Updates",
@@ -793,14 +819,31 @@ namespace MonitorDimmer
                 AutoSize = false,
                 Size = new Size(S(110), S(22)),
                 Anchor = AnchorStyles.Top | AnchorStyles.Left,
-                Margin = new Padding(3, S(9), 3, 0),
+                Margin = new Padding(3, S(2), 3, 0),
                 TextAlign = ContentAlignment.MiddleLeft
             }, 0, row);
 
+            var small = new Font("Segoe UI", 8.75f);
             var cell = new Panel { Dock = DockStyle.Fill, BackColor = Ui.Card, Margin = new Padding(3, 0, 3, 0) };
-            var glyph = new StatusGlyph(k) { BackColor = Ui.Card, Size = new Size(S(20), S(22)), Location = new Point(0, S(9)) };
+            var glyph = new StatusGlyph(k) { BackColor = Ui.Card, Size = new Size(S(20), S(22)), Location = new Point(0, S(2)) };
             var title = new Label { ForeColor = Ui.Text, BackColor = Ui.Card, AutoSize = false, AutoEllipsis = true, UseMnemonic = false, TextAlign = ContentAlignment.MiddleLeft };
-            var detail = new Label { ForeColor = Ui.Muted, BackColor = Ui.Card, AutoSize = false, AutoEllipsis = true, UseMnemonic = false, TextAlign = ContentAlignment.TopLeft, Font = new Font("Segoe UI", 8.75f) };
+            var detail = new Label { ForeColor = Ui.Muted, BackColor = Ui.Card, AutoSize = false, AutoEllipsis = true, UseMnemonic = false, TextAlign = ContentAlignment.TopLeft, Font = small };
+            var more = new Label { Text = "Details", ForeColor = Ui.AccentText, BackColor = Ui.Card, AutoSize = false, UseMnemonic = false, TextAlign = ContentAlignment.TopLeft, Font = small, Cursor = Cursors.Hand, Visible = false };
+            // aufgeklapptes Feld mit dem technischen Originaltext (markier- und kopierbar)
+            var box = new Panel { BackColor = Ui.Back, Visible = false, Padding = new Padding(S(8), S(6), S(8), S(6)) };
+            var boxText = new TextBox
+            {
+                Multiline = true,
+                ReadOnly = true,
+                WordWrap = true,
+                BorderStyle = BorderStyle.None,
+                BackColor = Ui.Back,
+                ForeColor = Ui.Text,
+                Font = small,
+                Dock = DockStyle.Fill,
+                TabStop = false
+            };
+            box.Controls.Add(boxText);
             var check = new ModernButton("Jetzt prüfen", MenuHelper.Refresh, false, k) { Margin = Padding.Empty };
             var install = new ModernButton("Aktualisieren", MenuHelper.Download, true, k) { Margin = Padding.Empty };
             var page = new ModernButton("Release-Seite", MenuHelper.Link, false, k) { Margin = Padding.Empty };
@@ -814,20 +857,62 @@ namespace MonitorDimmer
             }
             cell.Controls.Add(glyph);
             cell.Controls.Add(title);
+            cell.Controls.Add(more);
             cell.Controls.Add(detail);
+            cell.Controls.Add(box);
+
+            string moreText = "";
+            bool open = false;
+            int boxHeight = 0; // derzeit aufgeklappte Höhe (Feld + S(8)), um die Karte und Fenster gewachsen sind
+            const TextFormatFlags flags = TextFormatFlags.NoPadding | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix;
 
             Action layout = () =>
             {
-                // Knopf rechtsbündig mit dem Schalter darunter (dessen Spur endet 2 px vor dem Rand) und auf Höhe
-                // der ersten Zeile – so hat die zweite Zeile (letzte Prüfung) die volle Breite
+                // Knopf rechtsbündig (Schalter darunter endet 2 px vor dem Rand), Oberkante uy + S(8), neben beiden Zeilen
                 int right = cell.Width - S(2);
-                foreach (var b in new[] { check, install, page }) b.Location = new Point(right - b.Width, S(20) - b.Height / 2);
+                foreach (var b in new[] { check, install, page }) b.Location = new Point(right - b.Width, S(8));
                 var shown = install.Visible ? install : page.Visible ? page : check;
-                int tx = S(28), tw = Math.Max(S(40), shown.Left - S(12) - tx);
-                title.SetBounds(tx, S(9), tw, S(22));
-                detail.SetBounds(tx, S(33), Math.Max(S(40), cell.Width - tx), S(20));
+                int tx = S(23);
+                int limit = Math.Max(S(40), shown.Left - S(6) - tx); // zweite Zeile endet vor dem Knopf
+                title.SetBounds(tx, S(2), limit, S(22));
+                int linkW = more.Visible ? TextRenderer.MeasureText(more.Text, small, Size.Empty, flags).Width + S(2) : 0;
+                // Label zeichnet mit kleinem Innenabstand: Breite = Text (NoPadding) + Reserve
+                int textW = detail.Text.Length == 0 ? 0 : TextRenderer.MeasureText(detail.Text, small, Size.Empty, flags).Width;
+                int room = (more.Visible ? limit - linkW - S(3) : limit) - S(8);
+                if (textW > room) textW = Math.Max(0, room); // zu lang: mit „…“ kürzen, ganzer Text im Tooltip
+                detail.SetBounds(tx, S(23), Math.Max(1, textW + S(8)), S(20));
+                // „Details“ etwa ein Leerzeichen hinter dem Text, ohne Text bündig unter der Überschrift
+                int mx = detail.Text.Length == 0 ? tx : tx + textW + S(3);
+                more.SetBounds(mx, S(23), linkW, S(20));
+                box.SetBounds(0, S(46), cell.Width, Math.Max(0, boxHeight - S(8)));
             };
             cell.Resize += (s, e) => layout();
+
+            Action<bool> setOpen = on =>
+            {
+                int want = 0;
+                if (on && moreText.Length > 0)
+                {
+                    int w = Math.Max(S(40), cell.Width - S(16));
+                    int line = TextRenderer.MeasureText("Ag", small).Height;
+                    int h = TextRenderer.MeasureText(moreText, small, new Size(w, 0), TextFormatFlags.WordBreak | TextFormatFlags.NoPrefix).Height;
+                    bool scroll = h > line * 6;
+                    h = Math.Min(h, line * 6); // höchstens sechs Zeilen, sonst Bildlauf im Feld
+                    boxText.ScrollBars = scroll ? ScrollBars.Vertical : ScrollBars.None;
+                    want = h + S(12) + S(8);
+                }
+                else on = false;
+                open = on;
+                boxText.Text = moreText;
+                more.Text = open ? "Weniger" : "Details";
+                box.Visible = open;
+                int d = want - boxHeight;
+                boxHeight = want;
+                rowStyle.Height = S(49) + boxHeight; // „Automatisch prüfen“ rückt mit
+                GrowCard(d);
+                layout();
+            };
+            more.Click += (s, e) => setOpen(!open);
 
             Action<UpdateStatus> show = st =>
             {
@@ -841,15 +926,19 @@ namespace MonitorDimmer
                 }
                 title.Text = st.Title;
                 title.ForeColor = st.Kind == UpdateKind.Available ? Ui.AccentText : st.Kind == UpdateKind.Checking ? Ui.Muted : Ui.Text;
+                tip.SetToolTip(title, st.Title);
                 detail.Text = st.Detail;
                 tip.SetToolTip(detail, st.Detail);
+                moreText = st.More ?? "";
+                more.Visible = moreText.Length > 0;
                 bool available = st.Kind == UpdateKind.Available;
                 bool canInstall = available && updates.CanInstall != null && updates.CanInstall();
                 install.Visible = canInstall;
                 page.Visible = available && !canInstall;
                 check.Visible = !available;
                 check.Enabled = st.Kind != UpdateKind.Checking;
-                layout();
+                // neuer Stand: Feld schließen (auch wenn er keinen Detailtext hat)
+                setOpen(false);
             };
 
             check.Click += async (s, e) =>
@@ -857,7 +946,7 @@ namespace MonitorDimmer
                 show(new UpdateStatus(UpdateKind.Checking, "Prüfe auf GitHub …", ""));
                 UpdateStatus st;
                 try { st = await updates.CheckNow(); }
-                catch (Exception ex) { st = new UpdateStatus(UpdateKind.Failed, "Prüfung nicht möglich", ex.Message); }
+                catch (Exception ex) { st = UpdateStatus.FromError(ex); }
                 if (!IsDisposed) show(st);
             };
             install.Click += (s, e) =>
@@ -866,8 +955,8 @@ namespace MonitorDimmer
                 if (updates.Install != null) updates.Install();
             };
             page.Click += (s, e) => { if (updates.OpenPage != null) updates.OpenPage(); };
-            show(updates.Status());
             t.Controls.Add(cell, 1, row);
+            show(updates.Status());
 
             // Automatisch prüfen: Text bündig mit den Werten darüber, Schalter rechts
             var autoCell = new Panel { Dock = DockStyle.Fill, BackColor = Ui.Card, Margin = new Padding(3, 0, 3, 0) };
@@ -887,6 +976,38 @@ namespace MonitorDimmer
             autoCell.Controls.Add(autoText);
             autoCell.Controls.Add(auto);
             t.Controls.Add(autoCell, 1, row + 1);
+
+            // Automatisch aktualisieren: direkt darunter, nur bedienbar, wenn „Automatisch prüfen“ an ist
+            if (!withInstall) return;
+            var instCell = new Panel { Dock = DockStyle.Fill, BackColor = Ui.Card, Margin = new Padding(3, 0, 3, 0) };
+            var inst = new ModernCheck("", k) { Checked = updates.AutoInstall(), BackColor = Ui.Card, Dock = DockStyle.Right, Width = S(46) };
+            var instText = new Label
+            {
+                Text = "Automatisch aktualisieren",
+                ForeColor = Ui.Text,
+                BackColor = Ui.Card,
+                Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.MiddleLeft,
+                AutoEllipsis = true,
+                Cursor = Cursors.Hand
+            };
+            const string instTip = "Eine neue Version ohne Rückfrage installieren, sobald Monitor Dimmer nicht beschäftigt ist. " +
+                "Monitor Dimmer startet danach von selbst neu (im Infobereich, wenn das Fenster vorher zu war).";
+            tip.SetToolTip(inst, instTip);
+            tip.SetToolTip(instText, instTip);
+            instText.Click += (s, e) => { if (inst.Enabled) inst.Checked = !inst.Checked; };
+            inst.CheckedChanged += (s, e) => { if (updates.SetAutoInstall != null) updates.SetAutoInstall(inst.Checked); };
+            Action sync = () =>
+            {
+                inst.Enabled = auto.Checked;
+                instText.ForeColor = auto.Checked ? Ui.Text : Ui.Disabled;
+                instText.Cursor = auto.Checked ? Cursors.Hand : Cursors.Default;
+            };
+            auto.CheckedChanged += (s, e) => sync();
+            sync();
+            instCell.Controls.Add(instText);
+            instCell.Controls.Add(inst);
+            t.Controls.Add(instCell, 1, row + 2);
         }
 
         private void AddRow(TableLayoutPanel t, ToolTip tip, string name, string value)

@@ -63,9 +63,25 @@ namespace MonitorDimmer
             catch (WebException ex)
             {
                 var http = ex.Response as HttpWebResponse;
-                if (http != null && http.StatusCode == HttpStatusCode.NotFound) throw new Exception("Auf GitHub ist noch keine Version veröffentlicht.");
-                if (http != null && (int)http.StatusCode == 403) throw new Exception("GitHub hat die Anfrage abgelehnt (zu viele Anfragen). Später erneut versuchen.");
-                throw new Exception("GitHub nicht erreichbar: " + ex.Message);
+                if (http != null && http.StatusCode == HttpStatusCode.NotFound)
+                {
+                    // /releases/latest kennt nur fertige Versionen – kein Fehler
+                    var pre = new Exception("Nur Vorabversionen");
+                    pre.Data["Prerelease"] = true;
+                    throw pre;
+                }
+                // feste Kurzmeldung, technischer Originaltext für „Details“ (globale Vorgabe, Referenz Wake on LAN)
+                string detail = ex.Message;
+                if (ex.InnerException != null && ex.InnerException.Message != ex.Message) detail += "\r\n" + ex.InnerException.Message;
+                if (http != null && (int)http.StatusCode == 403) throw Fail("Zu viele Anfragen.", detail);
+                if (ex.Status == WebExceptionStatus.NameResolutionFailure || ex.Status == WebExceptionStatus.ProxyNameResolutionFailure
+                    || ex.Status == WebExceptionStatus.ConnectFailure) throw Fail("Keine Verbindung.", detail);
+                if (ex.Status == WebExceptionStatus.Timeout) throw Fail("Keine Antwort.", detail);
+                throw Fail("Nicht erreichbar.", detail);
+            }
+            catch (IOException ex)
+            {
+                throw new Exception(ex.Message); // unbekannter Fehler: nur „Details“
             }
 
             var info = new ReleaseInfo { PageUrl = ReleasesPage };
@@ -76,8 +92,17 @@ namespace MonitorDimmer
             if (page.Success) info.PageUrl = page.Groups[1].Value;
             var zip = Regex.Match(json, "\"browser_download_url\"\\s*:\\s*\"([^\"]+\\.zip)\"", RegexOptions.IgnoreCase);
             if (zip.Success) info.ZipUrl = zip.Groups[1].Value;
-            if (string.IsNullOrEmpty(info.Version)) throw new Exception("Antwort von GitHub ohne Versionsnummer.");
+            Version parsed;
+            if (string.IsNullOrEmpty(info.Version) || !System.Version.TryParse(info.Version, out parsed)) throw Fail("Antwort unlesbar.", null); // ohne „Details“
             return info;
+        }
+
+        /// <summary>Feste Kurzmeldung mit technischem Originaltext für „Details“ (null = ohne „Details“).</summary>
+        private static Exception Fail(string message, string detail)
+        {
+            var ex = new Exception(message);
+            ex.Data["Detail"] = detail ?? "";
+            return ex;
         }
 
         /// <summary>true, wenn remote neuer ist als die laufende Version.</summary>
@@ -114,7 +139,8 @@ namespace MonitorDimmer
         /// bis dieses Programm beendet ist, ersetzt EXE und Liesmich und startet das Programm neu.
         /// Danach muss der Aufrufer das Programm beenden.
         /// </summary>
-        public static void Install(ReleaseInfo release)
+        /// <param name="tray">Fenster war zu: nach dem Update nur im Infobereich starten (--nach-update /tray)</param>
+        public static void Install(ReleaseInfo release, bool tray)
         {
             if (string.IsNullOrEmpty(release.ZipUrl)) throw new Exception("Im Release ist keine ZIP-Datei angehängt.");
             string blocker = InstallBlocker();
@@ -135,7 +161,7 @@ namespace MonitorDimmer
             string target = Path.GetDirectoryName(exe);
             var start = new ProcessStartInfo("powershell.exe",
                 "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \"" + script + "\" -ProcessId " + Process.GetCurrentProcess().Id +
-                " -Zip \"" + zip + "\" -Exe \"" + exe + "\" -Version \"" + release.Version + "\"")
+                " -Zip \"" + zip + "\" -Exe \"" + exe + "\" -Version \"" + release.Version + "\"" + (tray ? " -Tray" : ""))
             { UseShellExecute = true, WindowStyle = ProcessWindowStyle.Hidden };
             // Programmordner ohne Schreibrechte (z. B. unter Programme): Hilfsskript mit Administratorrechten starten
             if (!CanWrite(target)) start.Verb = "runas";
@@ -172,7 +198,7 @@ namespace MonitorDimmer
             return null;
         }
 
-        private static void Write(bool auto, DateTime last)
+        private static void Write(bool auto, bool autoInstall, DateTime last)
         {
             try
             {
@@ -181,17 +207,25 @@ namespace MonitorDimmer
                 {
                     "; Monitor Dimmer - Update-Prüfung über GitHub",
                     "auto=" + (auto ? "true" : "false"),
+                    "autoinstall=" + (autoInstall ? "true" : "false"),
                     "last=" + (last == DateTime.MinValue ? "" : last.ToUniversalTime().ToString("o", CultureInfo.InvariantCulture))
                 }, Encoding.UTF8);
             }
             catch (Exception ex) { Log.Error("Update-Einstellung konnte nicht gespeichert werden: {0}", ex.Message); }
         }
 
-        /// <summary>Beim Start automatisch prüfen (höchstens einmal täglich). Standard: an.</summary>
+        /// <summary>Automatisch prüfen (kurz nach jedem Start, im Betrieb alle 6 Stunden). Standard: an.</summary>
         public static bool Auto
         {
             get { string v = Read("auto"); return v == null || !string.Equals(v, "false", StringComparison.OrdinalIgnoreCase); }
-            set { Write(value, LastCheck); }
+            set { Write(value, AutoInstall, LastCheck); }
+        }
+
+        /// <summary>Automatisch aktualisieren: neue Version ohne Rückfrage installieren, sobald nichts zu tun ist. Standard: aus.</summary>
+        public static bool AutoInstall
+        {
+            get { return string.Equals(Read("autoinstall"), "true", StringComparison.OrdinalIgnoreCase); }
+            set { Write(Auto, value, LastCheck); }
         }
 
         /// <summary>Zeitpunkt der letzten erfolgreichen Prüfung (UTC), sonst DateTime.MinValue.</summary>
@@ -204,11 +238,11 @@ namespace MonitorDimmer
                 if (!string.IsNullOrEmpty(v) && DateTime.TryParse(v, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out last)) return last.ToUniversalTime();
                 return DateTime.MinValue;
             }
-            set { Write(Auto, value); }
+            set { Write(Auto, AutoInstall, value); }
         }
 
         private const string Script = @"# Monitor Dimmer – Update (wird vom Programm erzeugt)
-param([int]$ProcessId,[string]$Zip,[string]$Exe,[string]$Version)
+param([int]$ProcessId,[string]$Zip,[string]$Exe,[string]$Version,[switch]$Tray)
 $ErrorActionPreference = 'Stop'
 $log = Join-Path $PSScriptRoot 'Update.log'
 $name = Split-Path $Exe -Leaf
@@ -237,7 +271,7 @@ try {
 } catch {
   ('FEHLER ' + $_.Exception.Message) | Out-File $log -Encoding utf8
 }
-Start-Process -FilePath $Exe -ArgumentList '--nach-update'
+if ($Tray) { Start-Process -FilePath $Exe -ArgumentList '--nach-update','/tray' } else { Start-Process -FilePath $Exe -ArgumentList '--nach-update' }
 ";
     }
 
@@ -248,7 +282,22 @@ Start-Process -FilePath $Exe -ArgumentList '--nach-update'
     {
         public readonly UpdateKind Kind;
         public readonly string Title, Detail;
+        /// <summary>Technischer Originaltext für „Details“ (leer = kein „Details“).</summary>
+        public string More = "";
         public UpdateStatus(UpdateKind kind, string title, string detail) { Kind = kind; Title = title; Detail = detail ?? ""; }
+
+        /// <summary>
+        /// Fehler der Prüfung als Stand: feste Kurzmeldung (Message) mit Originaltext in Data["Detail"];
+        /// unbekannte Fehler nur mit „Details“. „Nur Vorabversionen“ ist kein Fehler.
+        /// </summary>
+        public static UpdateStatus FromError(Exception ex)
+        {
+            if (ex.Data.Contains("Prerelease"))
+                return new UpdateStatus(UpdateKind.Unknown, "Nur Vorabversionen", "Noch keine fertige Version.");
+            if (ex.Data.Contains("Detail"))
+                return new UpdateStatus(UpdateKind.Failed, "Prüfung nicht möglich", ex.Message) { More = ex.Data["Detail"] as string ?? "" };
+            return new UpdateStatus(UpdateKind.Failed, "Prüfung nicht möglich", "") { More = ex.Message };
+        }
     }
 
     /// <summary>Verbindung des Info-Fensters zur Update-Prüfung im Tray-Programm (wie Wake on LAN).</summary>
@@ -261,6 +310,9 @@ Start-Process -FilePath $Exe -ArgumentList '--nach-update'
         public Func<bool> CanInstall;
         public Action Install;
         public Action OpenPage;
+        /// <summary>„Automatisch aktualisieren“ (ohne diese Hooks fehlt die Zeile im Info-Fenster).</summary>
+        public Func<bool> AutoInstall;
+        public Action<bool> SetAutoInstall;
     }
 
     /// <summary>Symbol des Update-Stands (Segoe Fluent Icons 11 pt, nach Pixeln zentriert).</summary>

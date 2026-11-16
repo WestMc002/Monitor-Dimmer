@@ -34,10 +34,13 @@ namespace MonitorDimmer
         private readonly Timer _reapplyTimer = new Timer();
         private readonly Timer _gameExitTimer = new Timer { Interval = 2000 };
         /// <summary>Update-Prüfung: erstes Mal 1 Minute nach dem Start, danach stündlich nachsehen (geprüft wird höchstens alle 20 h).</summary>
-        private readonly Timer _updateTimer = new Timer { Interval = 60 * 1000 };
+        private readonly Timer _updateTimer = new Timer { Interval = 15 * 1000 }; // erste Prüfung ca. 15 s nach dem Start
+        private readonly Timer _autoUpdateTimer = new Timer { Interval = 5 * 60 * 1000 }; // beschäftigt: alle 5 Minuten erneut versuchen
         private ReleaseInfo _available;      // neuere Version auf GitHub, sonst null
         private string _notifiedVersion;     // für diese Version wurde schon ein Hinweis gezeigt
         private bool _installing;
+        /// <summary>Neustart nach dem Update mit /tray: Fenster war vorher zu, nicht öffnen.</summary>
+        public static bool AfterUpdateTray;
         /// <summary>Gesetzt beim Neustart nach einem Update (--nach-update).</summary>
         public static bool AfterUpdate;
 
@@ -177,6 +180,8 @@ namespace MonitorDimmer
                     Log.Error("Update fehlgeschlagen: {0} - die bisherige Version läuft weiter.", msg);
                     ShowBalloon("Update fehlgeschlagen: " + msg + "\r\nDie bisherige Version läuft weiter.", ToolTipIcon.Warning);
                 }
+                // war das Fenster vor dem Update offen, wieder öffnen (mit /tray nur im Infobereich)
+                if (!AfterUpdateTray) _sync.Post(_ => { if (!_exiting) ShowMainWindow(); }, null);
             }
             AboutDialog.Updates = new UpdateHooks
             {
@@ -186,12 +191,27 @@ namespace MonitorDimmer
                 CheckNow = () => CheckForUpdates(true),
                 CanInstall = () => _available != null && !string.IsNullOrEmpty(_available.ZipUrl) && Updater.InstallBlocker() == null,
                 Install = InstallUpdate,
-                OpenPage = OpenReleasePage
+                OpenPage = OpenReleasePage,
+                AutoInstall = () => Updater.AutoInstall,
+                SetAutoInstall = on =>
+                {
+                    Updater.AutoInstall = on;
+                    Log.Info("Automatisch aktualisieren: {0}", on ? "an" : "aus");
+                    if (on) TryAutoUpdate(); // schon eine neue Version bekannt: gleich versuchen
+                }
             };
             _tray.BalloonTipClicked += (s, e) => { if (_available != null && _balloonIsUpdate) InstallUpdate(); };
-            // erste Prüfung 60 s nach dem Start, danach alle 6 Stunden nachsehen, ob sie fällig ist (höchstens alle 20 Stunden)
-            _updateTimer.Tick += (s, e) => { _updateTimer.Interval = 6 * 60 * 60 * 1000; CheckForUpdates(false); };
+            // erste Prüfung ca. 15 s nach jedem Start (ohne 20-Stunden-Sperre), danach alle 6 Stunden nachsehen,
+            // ob sie fällig ist (höchstens alle 20 Stunden)
+            bool firstCheck = true;
+            _updateTimer.Tick += (s, e) =>
+            {
+                _updateTimer.Interval = 6 * 60 * 60 * 1000;
+                CheckForUpdates(false, firstCheck);
+                firstCheck = false;
+            };
             _updateTimer.Start();
+            _autoUpdateTimer.Tick += (s, e) => TryAutoUpdate();
         }
 
         // ================================================================== Kernlogik
@@ -1187,25 +1207,41 @@ namespace MonitorDimmer
 
         // ================================================================== Update-Prüfung
 
-        private string _updateError; // letzte fehlgeschlagene Prüfung (nur für das Info-Fenster)
+        private UpdateStatus _updateError;   // letzte Prüfung von Hand ohne Ergebnis bzw. „Nur Vorabversionen“ (nur für das Info-Fenster)
+        private Exception _installError;     // automatisches Aktualisieren gescheitert (Kurzmeldung, Originaltext für „Details“)
 
         private UpdateStatus UpdateStatusNow()
         {
             DateTime last = Updater.LastCheck;
             string when = last == DateTime.MinValue ? "" : "Zuletzt geprüft " + last.ToLocalTime().ToString("dd.MM.yyyy");
-            if (_available != null) return new UpdateStatus(UpdateKind.Available, "Version " + _available.Version + " verfügbar", when);
-            if (_updateError != null) return new UpdateStatus(UpdateKind.Failed, "Prüfung nicht möglich", _updateError);
+            if (_available != null)
+            {
+                var a = new UpdateStatus(UpdateKind.Available, "Version " + _available.Version + " verfügbar", when);
+                if (_installError != null)
+                {
+                    // automatisches Aktualisieren gescheitert: Kurzmeldung mit „Details“ statt der letzten Prüfung
+                    a = new UpdateStatus(UpdateKind.Available, a.Title, "Update fehlgeschlagen.") { More = _installError.Message };
+                }
+                return a;
+            }
+            if (_updateError != null) return _updateError;
             if (last == DateTime.MinValue) return new UpdateStatus(UpdateKind.Unknown, "Noch nicht geprüft", "");
             return new UpdateStatus(UpdateKind.Current, "Aktuell", when);
         }
 
-        /// <summary>
-        /// Neueste Version auf GitHub abfragen (im Hintergrund). Automatisch (manual = false) höchstens alle 20 Stunden
-        /// und still; Fehler stehen dann nur im Protokoll. Das Ergebnis einer Prüfung von Hand zeigt nur das Info-Fenster.
-        /// </summary>
         private System.Threading.Tasks.Task<UpdateStatus> CheckForUpdates(bool manual)
         {
-            if (Demo.Active || _exiting || (!manual && (!Updater.Auto || (DateTime.UtcNow - Updater.LastCheck).TotalHours < 20)))
+            return CheckForUpdates(manual, false);
+        }
+
+        /// <summary>
+        /// Neueste Version auf GitHub abfragen (im Hintergrund). Automatisch (manual = false) still; Fehler stehen dann
+        /// nur im Protokoll. Beim Start (atStart) ohne 20-Stunden-Sperre, die Nachprüfung alle 6 Stunden mit Sperre.
+        /// Das Ergebnis einer Prüfung von Hand zeigt nur das Info-Fenster.
+        /// </summary>
+        private System.Threading.Tasks.Task<UpdateStatus> CheckForUpdates(bool manual, bool atStart)
+        {
+            if (Demo.Active || _exiting || (!manual && (!Updater.Auto || (!atStart && (DateTime.UtcNow - Updater.LastCheck).TotalHours < 20))))
                 return System.Threading.Tasks.Task.FromResult(UpdateStatusNow());
             var ui = System.Threading.Tasks.TaskScheduler.FromCurrentSynchronizationContext();
             return System.Threading.Tasks.Task.Factory.StartNew(() => Updater.GetLatest())
@@ -1214,9 +1250,13 @@ namespace MonitorDimmer
                     if (_exiting) return UpdateStatusNow();
                     if (t.Exception != null)
                     {
-                        string msg = t.Exception.GetBaseException().Message;
-                        Log.Info("Update-Prüfung nicht möglich: {0}", msg);
-                        if (manual) _updateError = msg;
+                        var ex = t.Exception.GetBaseException();
+                        var st = UpdateStatus.FromError(ex);
+                        if (st.Kind == UpdateKind.Failed)
+                            Log.Info("Update-Prüfung{0} nicht möglich: {1}", manual ? "" : " (automatisch)",
+                                (ex.Message + (st.More.Length > 0 && st.More != ex.Message ? " - " + st.More : "")).Replace("\r\n", " "));
+                        if (manual || st.Kind != UpdateKind.Failed) _updateError = st; // „Nur Vorabversionen“ ist kein Fehler
+                        if (manual) return st;
                         return UpdateStatusNow();
                     }
                     var release = t.Result;
@@ -1224,10 +1264,15 @@ namespace MonitorDimmer
                     Updater.LastCheck = DateTime.UtcNow;
                     if (Updater.IsNewer(release.Version))
                     {
+                        if (_available == null || _available.Version != release.Version) _installError = null;
                         _available = release;
                         RefreshUpdateBar();
                         Log.Info("Neue Version {0} auf GitHub verfügbar (installiert: {1}).", release.Version, AppInfo.Version);
-                        if (release.Version != _notifiedVersion && !manual)
+                        if (!manual && Updater.AutoInstall && TryAutoUpdate())
+                        {
+                            // wird gleich installiert (bzw. wartet, bis nichts zu tun ist) – kein Hinweis nötig
+                        }
+                        else if (release.Version != _notifiedVersion && !manual)
                         {
                             // Hinweis im Infobereich einmal je Version und Programmstart
                             _notifiedVersion = release.Version;
@@ -1240,11 +1285,66 @@ namespace MonitorDimmer
                     else
                     {
                         _available = null;
+                        _installError = null;
                         RefreshUpdateBar();
                         if (manual) Log.Info("Update-Prüfung: Version {0} ist aktuell.", AppInfo.Version);
                     }
                     return UpdateStatusNow();
                 }, ui);
+        }
+
+        /// <summary>
+        /// Monitor Dimmer ist beschäftigt: Update verschieben statt stören. Beschäftigt = Spiel läuft bzw. Monitore sind
+        /// gedimmt, ungespeicherte Änderungen im Fenster, ein Dialog (z. B. Meldung, Bearbeiten, Info) oder das Tray-Menü offen.
+        /// </summary>
+        private bool BusyForUpdate()
+        {
+            if (_installing) return true;
+            if ((_current != null && !_current.IsUndimmed) || ScheduleDimmed) return true;
+            if (_main != null && !_main.IsDisposed && _main.HasChanges) return true;
+            if (_tray.ContextMenuStrip != null && _tray.ContextMenuStrip.Visible) return true;
+            foreach (Form f in Application.OpenForms)
+                if (f.Modal && f.Visible) return true;
+            return false;
+        }
+
+        /// <summary>
+        /// Automatisch aktualisieren: neue Version ohne Rückfrage installieren (nur mit ZIP, nicht im Projektordner).
+        /// Ist Monitor Dimmer beschäftigt, alle 5 Minuten erneut versuchen. Rückgabe true = wird installiert bzw. wartet.
+        /// </summary>
+        private bool TryAutoUpdate()
+        {
+            _autoUpdateTimer.Stop();
+            if (_exiting || Demo.Active || !Updater.Auto || !Updater.AutoInstall || _available == null || _installError != null) return false;
+            if (Updater.InstallBlocker() != null || string.IsNullOrEmpty(_available.ZipUrl)) return false;
+            if (BusyForUpdate())
+            {
+                Log.Info("Automatisch aktualisieren: Monitor Dimmer ist beschäftigt - neuer Versuch in 5 Minuten.");
+                _autoUpdateTimer.Start();
+                return true;
+            }
+            var release = _available;
+            bool tray = _main == null || _main.IsDisposed || !_main.Visible; // Fenster zu: danach nur im Infobereich starten
+            _installing = true;
+            RefreshUpdateBar();
+            Log.Info("Automatisch aktualisieren: lade Version {0} ...", release.Version);
+            var ui = System.Threading.Tasks.TaskScheduler.FromCurrentSynchronizationContext();
+            System.Threading.Tasks.Task.Factory.StartNew(() => Updater.Install(release, tray))
+                .ContinueWith(t =>
+                {
+                    _installing = false;
+                    if (t.Exception != null)
+                    {
+                        // ohne Meldung: Hinweisleiste bleibt, Kurzmeldung mit „Details“ im Info-Fenster
+                        _installError = t.Exception.GetBaseException();
+                        Log.Error("Automatisch aktualisieren fehlgeschlagen: {0}", _installError.Message);
+                        RefreshUpdateBar();
+                        return;
+                    }
+                    Log.Info("Update wird installiert - Monitor Dimmer startet gleich neu.");
+                    ExitThread();
+                }, ui);
+            return true;
         }
 
         private void OpenReleasePage()
@@ -1265,7 +1365,8 @@ namespace MonitorDimmer
             Log.Info("Lade Version {0} ...", release.Version);
             ShowBalloon("Lade Version " + release.Version + " ...");
             var ui = System.Threading.Tasks.TaskScheduler.FromCurrentSynchronizationContext();
-            System.Threading.Tasks.Task.Factory.StartNew(() => Updater.Install(release))
+            bool tray = _main == null || _main.IsDisposed || !_main.Visible; // Fenster zu: danach nur im Infobereich starten
+            System.Threading.Tasks.Task.Factory.StartNew(() => Updater.Install(release, tray))
                 .ContinueWith(t =>
                 {
                     _installing = false;
@@ -1349,6 +1450,7 @@ namespace MonitorDimmer
             _gameExitTimer.Stop();
             _scheduleTimer.Stop();
             _updateTimer.Stop();
+            _autoUpdateTimer.Stop();
             ForgetGame();
             if (_watcher != null) _watcher.Dispose();
             if (_window != null) _window.Dispose();

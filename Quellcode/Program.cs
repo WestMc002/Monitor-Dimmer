@@ -42,6 +42,7 @@ namespace MonitorDimmer
             {
                 if (a.StartsWith("/config:", StringComparison.OrdinalIgnoreCase)) configName = a.Substring(8);
                 if (string.Equals(a, "--nach-update", StringComparison.OrdinalIgnoreCase)) TrayApp.AfterUpdate = true;
+                if (string.Equals(a, "/tray", StringComparison.OrdinalIgnoreCase)) TrayApp.AfterUpdateTray = true; // nach dem Update nur im Infobereich
             }
 
             bool created;
