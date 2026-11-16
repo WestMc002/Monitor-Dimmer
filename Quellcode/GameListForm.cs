@@ -178,7 +178,7 @@ namespace MonitorDimmer
             ButtonRow.Fit(actions, buttons, null); // schmal: Knöpfe nur mit Symbol („Speichern“ und „Abbrechen“ hat das Hauptfenster)
 
             // ---------- Hinweis ----------
-            var info = new InfoBanner("Änderungen werden erst mit „Speichern“ übernommen – alphabetisch sortiert, ohne Doppelte und mit vorheriger Sicherung (Einstellungen > Sicherungen öffnen).\n" +
+            var info = new InfoBanner("Änderungen werden erst mit „Speichern“ übernommen – alphabetisch sortiert, ohne Doppelte und mit vorheriger Sicherung (Extras > Sicherungen öffnen).\n" +
                 "Doppelklick auf ein Spiel öffnet seinen Ordner, Entf entfernt die markierten Einträge.", k) { Dock = DockStyle.Bottom };
 
             body.Controls.Add(card);
