@@ -5,6 +5,8 @@ Aktuelle Version: siehe Info-Fenster (Klick auf die Versionsnummer) bzw.
 Eigenschaften > Details der EXE. Vorgänger: Monitor Dimmer 1.3.2017.0120
 
 Versionen:
+  2.74.2026.1119 Update-Leiste: runde Ecken der Knöpfe in der Farbe der
+                 Leiste statt in Fensterfarbe
   2.73.2026.1118 Footer: Abstand der beiden Zeilen rechts passt jetzt auch
                  bei 100 % und 125 % Skalierung
   2.72.2026.1116 Footer: Name und Website rechts enger zusammen, so hoch wie

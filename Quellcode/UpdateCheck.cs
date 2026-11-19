@@ -357,7 +357,6 @@ if ($Tray) { Start-Process -FilePath $Exe -ArgumentList '--nach-update','/tray' 
         {
             k = scale;
             SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
-            BackColor = Ui.Back;
             Font = new Font("Segoe UI Semibold", 9.5f);
             Install = new ModernButton("Jetzt aktualisieren", MenuHelper.Download, true, k) { Margin = Padding.Empty };
             Page = new ModernButton("Release-Seite", MenuHelper.Link, false, k) { Margin = Padding.Empty };
@@ -371,6 +370,14 @@ if ($Tray) { Start-Process -FilePath $Exe -ArgumentList '--nach-update','/tray' 
         }
 
         protected override void OnTextChanged(EventArgs e) { base.OnTextChanged(e); Invalidate(); }
+
+        /// <summary>Getönte Füllfarbe der Leiste. Die Knöpfe füllen ihre runden Ecken mit Parent.BackColor,
+        /// daher muss die Leiste diese Farbe melden (sonst Ecken in Fensterfarbe). Setzen (z. B. Theme.Apply) wird ignoriert.</summary>
+        public override Color BackColor
+        {
+            get { return Accent.Mix(Ui.Primary, Parent != null ? Parent.BackColor : Ui.Back, 0.14); }
+            set { }
+        }
 
         protected override void OnLayout(LayoutEventArgs e)
         {
