@@ -88,7 +88,21 @@ namespace MonitorDimmer
         /// <summary>profile: Name des Profils, für das sich "Beendete wieder starten" merkt, was beendet wurde.</summary>
         public static string Execute(ActionDef a, string profile)
         {
+            return Execute(a, profile, false);
+        }
+
+        /// <summary>
+        /// trusted: von Hand im Fenster ausgelöst („Jetzt testen“) – dann ohne Prüfwert. Beim Profilwechsel laufen Aktionen,
+        /// die Adminrechte nutzen können, mit Administratorrechten nur mit gültigem Prüfwert (siehe ActionSeal).
+        /// </summary>
+        public static string Execute(ActionDef a, string profile, bool trusted)
+        {
             string v = Environment.ExpandEnvironmentVariables((a.Value ?? "").Trim());
+            if (!trusted)
+            {
+                string blocked = ActionSeal.Blocked(a);
+                if (blocked != null) return "übersprungen: " + blocked;
+            }
             try
             {
                 switch (a.Type)
@@ -96,7 +110,7 @@ namespace MonitorDimmer
                     case "KillProcess": return KillProcess(v, profile);
                     case "StartProgram": return StartProgram(v, Environment.ExpandEnvironmentVariables(a.Arguments ?? ""));
                     case "StopService": return StopService(v, profile);
-                    case "RestoreStopped": return RestoreStopped(profile);
+                    case "RestoreStopped": return RestoreStopped(profile, trusted);
                     case "StartService": return StartService(v);
                     case "PowerPlan": return PowerPlan(v);
                     case "AudioDevice": return AudioSwitcher.SetDefaultWaiting(v, 60);
@@ -161,15 +175,17 @@ namespace MonitorDimmer
             path = path.Trim('"');
             if (!File.Exists(path)) return "Fehler: Datei nicht gefunden";
             if (Running(ExeName(path))) return "läuft bereits";
-            // Der Monitor Dimmer läuft mit Adminrechten - Programme aber normal (wie aus dem Startmenü) starten
+            // Der Monitor Dimmer läuft mit Adminrechten - Programme aber normal (wie aus dem Startmenü) starten. Mit
+            // Adminrechten nie erhöht starten: Pfad und Argumente kommen aus Dateien, die jedes Programm ändern kann.
             if (UserStarter.Start(path, args, Path.GetDirectoryName(path))) return "gestartet";
+            if (Autostart.IsElevated) return "Fehler: Start ohne Adminrechte nicht möglich";
             var psi = new ProcessStartInfo(path, args) { UseShellExecute = true, WorkingDirectory = Path.GetDirectoryName(path) };
             using (Process.Start(psi)) { }
-            return "gestartet (mit Adminrechten)";
+            return "gestartet";
         }
 
         /// <summary>Startet die Dienste und Programme wieder, die "Beim Aktivieren" dieses Profils beendet wurden.</summary>
-        private static string RestoreStopped(string profile)
+        private static string RestoreStopped(string profile, bool trusted)
         {
             if (profile == null) return "kein Profil";
             var list = StoppedRegistry.Take(profile);
@@ -178,6 +194,14 @@ namespace MonitorDimmer
             var errors = new List<string>();
             foreach (var e in list.Where(x => x.Kind == "S"))
             {
+                // mit Adminrechten nur Dienste, die eine bestätigte Aktion „Dienst beenden“ dieses Profils nennt
+                if (!trusted && !ActionSeal.ServiceAllowed(profile, e.Path))
+                {
+                    Log.Warn("  Dienst {0} -> übersprungen: steht in keiner bestätigten Aktion \"Dienst beenden\"", e.Path);
+                    failed++;
+                    errors.Add(e.Path);
+                    continue;
+                }
                 string r = StartService(e.Path);
                 Log.Info("  Dienst {0} -> {1}", e.Path, r);
                 if (r.StartsWith("Fehler")) { failed++; errors.Add(e.Path); } else ok++;
@@ -259,15 +283,22 @@ namespace MonitorDimmer
 
         private static string Command(string cmd)
         {
-            int code = RunHidden(Path.Combine(Environment.SystemDirectory, "cmd.exe"), "/c " + cmd, 120000);
+            int code = RunHidden(Path.Combine(Environment.SystemDirectory, "cmd.exe"), "/c " + cmd, 120000, ActionSeal.CommandDir);
             return code == int.MinValue ? "läuft nach 2 Minuten noch" : "beendet (Exitcode " + code + ")";
         }
 
         /// <summary>Startet unsichtbar und wartet; int.MinValue = Zeit abgelaufen.</summary>
         internal static int RunHidden(string exe, string args, int timeoutMs)
         {
+            return RunHidden(exe, args, timeoutMs, null);
+        }
+
+        /// <summary>workDir: fester Arbeitsordner (null = aktueller Ordner).</summary>
+        internal static int RunHidden(string exe, string args, int timeoutMs, string workDir)
+        {
             var psi = new ProcessStartInfo(exe, args)
             {
+                WorkingDirectory = workDir ?? "",
                 UseShellExecute = false,
                 CreateNoWindow = true,
                 WindowStyle = ProcessWindowStyle.Hidden,
@@ -838,6 +869,27 @@ namespace MonitorDimmer
         [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
         private static extern bool CreateProcessWithTokenW(IntPtr token, int logonFlags, string application, StringBuilder commandLine,
             int creationFlags, IntPtr environment, string currentDirectory, ref StartupInfo startupInfo, out ProcessInformation processInfo);
+
+        /// <summary>
+        /// Internetseite im Standardbrowser öffnen. Läuft Monitor Dimmer mit Adminrechten, startet der Browser trotzdem mit
+        /// normalen Rechten (über den Explorer des Benutzers, fester Pfad).
+        /// </summary>
+        public static void OpenUrl(string url)
+        {
+            if (string.IsNullOrEmpty(url) || !url.StartsWith("https://", StringComparison.OrdinalIgnoreCase)) return;
+            try
+            {
+                string explorer = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "explorer.exe");
+                if (Autostart.IsElevated)
+                {
+                    if (!Start(explorer, "\"" + url.Replace("\"", "%22") + "\"", Environment.GetFolderPath(Environment.SpecialFolder.Windows)))
+                        Log.Warn("Seite konnte nicht ohne Adminrechte geöffnet werden: {0}", url);
+                    return;
+                }
+                Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+            }
+            catch (Exception ex) { Log.Warn("Seite konnte nicht geöffnet werden: {0}", ex.Message); }
+        }
 
         /// <summary>false = nicht möglich (z. B. ohne Adminrechte) - dann normal starten.</summary>
         public static bool Start(string path, string args, string workDir)

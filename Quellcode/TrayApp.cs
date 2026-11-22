@@ -105,6 +105,7 @@ namespace MonitorDimmer
                 Log.Info("Erster Start: Startkonfiguration angelegt");
             }
             _config = AppConfig.Load(_configPath);
+            ActionSeal.SetConfig(_config, _configPath, _resourcesDir); // Prüfwert für Aktionen mit Adminrechten
             Accent.Enabled = _config.UseWindowsAccentColor;
             Log.SetMaxSize(_config.TraceLogFileMaxSize);
             LogConfigSummary();
@@ -174,11 +175,16 @@ namespace MonitorDimmer
                     Log.Info("Update auf Version {0} installiert.", result.Substring(2).Trim());
                     ShowBalloon("Update auf Version " + result.Substring(2).Trim() + " installiert.");
                 }
+                else if (result != null && result.StartsWith("ZURUECK"))
+                {
+                    Log.Info("Vorherige Version wiederhergestellt.");
+                    ShowBalloon("Vorherige Version wiederhergestellt – das Update kann jetzt erneut installiert werden.");
+                }
                 else if (result != null)
                 {
-                    string msg = result.Replace("FEHLER", "").Trim();
-                    Log.Error("Update fehlgeschlagen: {0} - die bisherige Version läuft weiter.", msg);
-                    ShowBalloon("Update fehlgeschlagen: " + msg + "\r\nDie bisherige Version läuft weiter.", ToolTipIcon.Warning);
+                    // kurze Meldung ohne Pfade und Technik; der Originaltext steht im Protokoll (globale Vorgabe)
+                    Updater.ErrorLog("Update nicht installiert: " + result);
+                    ShowBalloon("Update nicht installiert – die bisherige Version läuft weiter. Einzelheiten stehen im Protokoll.", ToolTipIcon.Warning);
                 }
                 // war das Fenster vor dem Update offen, wieder öffnen (mit /tray nur im Infobereich)
                 if (!AfterUpdateTray) _sync.Post(_ => { if (!_exiting) ShowMainWindow(); }, null);
@@ -189,7 +195,7 @@ namespace MonitorDimmer
                 Auto = () => Updater.Auto,
                 SetAuto = on => Updater.Auto = on,
                 CheckNow = () => CheckForUpdates(true),
-                CanInstall = () => _available != null && !string.IsNullOrEmpty(_available.ZipUrl) && Updater.InstallBlocker() == null,
+                CanInstall = () => Updater.CanInstall(_available) || (_available != null && Updater.RepairPending),
                 Install = InstallUpdate,
                 OpenPage = OpenReleasePage,
                 AutoInstall = () => Updater.AutoInstall,
@@ -200,7 +206,15 @@ namespace MonitorDimmer
                     if (on) TryAutoUpdate(); // schon eine neue Version bekannt: gleich versuchen
                 }
             };
-            _tray.BalloonTipClicked += (s, e) => { if (_available != null && _balloonIsUpdate) InstallUpdate(); };
+            _tray.BalloonTipClicked += (s, e) =>
+            {
+                if (_balloonOpensActions) ShowActions();
+                else if (_available != null && _balloonIsUpdate) InstallUpdate();
+            };
+            // mit Adminrechten: nicht bestätigte Aktionen laufen nicht (Hinweis kurz nach dem Start)
+            if (ActionSeal.Active && !ActionSeal.Valid && ActionSeal.HasAdminActions(_config))
+                _sync.Post(_ => { if (!_exiting) WarnUnconfirmedActions(); }, null);
+            CheckProtectedExe();
             // erste Prüfung ca. 15 s nach jedem Start (ohne 20-Stunden-Sperre), danach alle 6 Stunden nachsehen,
             // ob sie fällig ist (höchstens alle 20 Stunden)
             bool firstCheck = true;
@@ -554,6 +568,9 @@ namespace MonitorDimmer
                 return;
             }
             _config = cfg;
+            bool sealWasValid = ActionSeal.Valid;
+            if (!ActionSeal.SetConfig(cfg, _configPath, _resourcesDir) && sealWasValid && ActionSeal.Active && ActionSeal.HasAdminActions(cfg) && !quiet)
+                _sync.Post(_ => { if (!_exiting) WarnUnconfirmedActions(); }, null);
             Accent.Enabled = cfg.UseWindowsAccentColor;
             Accent.Refresh();
             Log.SetMaxSize(cfg.TraceLogFileMaxSize);
@@ -736,7 +753,7 @@ namespace MonitorDimmer
             if (_available != null)
             {
                 // oben im Menü fett (globale Vorgabe); im Projektordner bzw. ohne ZIP öffnet der Eintrag die Release-Seite
-                bool canInstall = Updater.InstallBlocker() == null && !string.IsNullOrEmpty(_available.ZipUrl);
+                bool canInstall = Updater.CanInstall(_available) || Updater.RepairPending;
                 var install = Item(_installing ? "Update wird geladen ..." : "Update auf " + _available.Version + " installieren ...", MenuHelper.Download,
                     canInstall ? (Action)InstallUpdate : OpenReleasePage);
                 install.Font = new Font(menu.Font, FontStyle.Bold);
@@ -871,8 +888,24 @@ namespace MonitorDimmer
         /// <summary>Autostart umschalten, im Hintergrund (die Adminabfrage von Windows blockiert sonst das Programm).</summary>
         private void ToggleAutostart(bool currentlyOn)
         {
-            Log.Info("Autostart wird {0}", currentlyOn ? "entfernt" : "eingerichtet");
             string exe = Application.ExecutablePath;
+            if (!currentlyOn)
+            {
+                // Abweichung „Autostart mit Adminrechten“: nur aus einem geschützten Ordner und mit kurzer Erklärung
+                string blocker = Autostart.ExeBlocker(exe);
+                if (blocker != null)
+                {
+                    Log.Warn("Autostart nicht eingerichtet: {0}", blocker);
+                    MessageBox.Show(blocker, "Monitor Dimmer", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+                if (MessageBox.Show("Monitor Dimmer startet dann bei jeder Anmeldung mit Administratorrechten, damit Aktionen wie " +
+                        "„Dienst beenden“ ohne Rückfrage laufen.\r\n\r\nMit Adminrechten laufen solche Aktionen nur, wenn sie unter " +
+                        "„Aktionen“ gespeichert (bestätigt) sind. Programme startet Monitor Dimmer immer ohne Adminrechte.\r\n\r\n" +
+                        "Autostart mit Adminrechten einrichten?", "Monitor Dimmer",
+                        MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2) != DialogResult.Yes) return;
+            }
+            Log.Info("Autostart wird {0}", currentlyOn ? "entfernt" : "eingerichtet");
             var ui = System.Threading.Tasks.TaskScheduler.FromCurrentSynchronizationContext();
             System.Threading.Tasks.Task.Factory.StartNew(() =>
             {
@@ -972,7 +1005,8 @@ namespace MonitorDimmer
                 {
                     var def = DefaultListProfile();
                     string select = _current != null && !_current.IsUndimmed ? _current.Name : (def != null ? def.Name : null);
-                    return new ActionsForm(_config, _resourcesDir, select, icon());
+                    return new ActionsForm(_config, _resourcesDir, select, icon(),
+                        ActionSeal.NeedsConfirmation(_config, _configPath, _resourcesDir));
                 },
                 Save = f => SaveActions((ActionsForm)f)
             };
@@ -1060,8 +1094,13 @@ namespace MonitorDimmer
         {
             if (_main == null || _main.IsDisposed) return;
             if (_available == null || _updateLater || Demo.Active) { _main.HideUpdateBar(); return; }
-            string blocker = Updater.InstallBlocker() ?? (string.IsNullOrEmpty(_available.ZipUrl) ? "Im Release ist keine ZIP-Datei angehängt." : null);
-            _main.ShowUpdateBar(_available.Version, blocker == null && !_installing, blocker, InstallUpdate, OpenReleasePage, () => _updateLater = true);
+            string blocker = Updater.InstallBlocker();
+            if (blocker == null && _available.Problem != null)
+                blocker = "Monitor Dimmer installiert dieses Update nicht: " + _available.Problem + " " + (_available.ProblemDetail ?? "") + " Die Release-Seite ist trotzdem erreichbar.";
+            // nicht abgeschlossenes Update: „Jetzt aktualisieren“ bietet die Wiederherstellung an
+            bool repair = blocker == Updater.PendingText;
+            if (repair) blocker += " Ein Klick stellt die vorherige Version wieder her.";
+            _main.ShowUpdateBar(_available.Version, (Updater.CanInstall(_available) || repair) && !_installing, blocker, InstallUpdate, OpenReleasePage, () => _updateLater = true);
         }
 
         private void ShowMainWindow()
@@ -1151,6 +1190,15 @@ namespace MonitorDimmer
                 AppConfig.SetActions(_configPath, f.Result, f.RemoveHandlers);
                 Log.Info("Aktionen gespeichert");
                 ReloadConfig(true);
+                // Prüfwert für Aktionen mit Adminrechten (nur nötig, wenn Monitor Dimmer so läuft bzw. startet)
+                string sealError = ActionSeal.Save(_config, _configPath, _resourcesDir);
+                if (sealError != null)
+                {
+                    Log.Warn("Prüfwert der Aktionen: {0}", sealError);
+                    ShowBalloon("Aktionen gespeichert, aber nicht für Adminrechte bestätigt: " + sealError +
+                        "\r\nAktionen wie „Dienst beenden“ laufen mit Adminrechten erst nach der Bestätigung.", ToolTipIcon.Warning);
+                }
+                ActionSeal.SetConfig(_config, _configPath, _resourcesDir);
                 return null;
             }
             catch (Exception ex)
@@ -1181,13 +1229,14 @@ namespace MonitorDimmer
 
         private void OpenFile(string path, bool withNotepadFallback)
         {
+            if (path.StartsWith("https://", StringComparison.OrdinalIgnoreCase)) { UserStarter.OpenUrl(path); return; }
             try
             {
                 Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
             }
             catch (Exception)
             {
-                if (withNotepadFallback) Process.Start("notepad.exe", "\"" + path + "\"");
+                if (withNotepadFallback) Process.Start(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "notepad.exe"), "\"" + path + "\""); // fester Pfad
             }
         }
 
@@ -1199,11 +1248,42 @@ namespace MonitorDimmer
         public void ShowBalloon(string text, ToolTipIcon icon)
         {
             _balloonIsUpdate = false;
+            _balloonOpensActions = false;
             try { _tray.ShowBalloonTip(3000, _config.ProductName, text, icon); }
             catch { }
         }
 
         private bool _balloonIsUpdate; // Klick auf den Hinweis startet das Update
+        private bool _balloonOpensActions; // Klick auf den Hinweis öffnet die Aktionen
+
+        /// <summary>Mit Adminrechten: Aktionen ohne gültigen Prüfwert werden übersprungen – Hinweis mit Klick auf „Aktionen“.</summary>
+        private void WarnUnconfirmedActions()
+        {
+            Log.Warn("Aktionen mit Adminrechten sind nicht bestätigt (Prüfwert fehlt oder passt nicht) - sie werden übersprungen.");
+            ShowBalloon("Aktionen wie „Dienst beenden“ sind für Adminrechte nicht bestätigt und werden übersprungen.\r\n" +
+                "Klicken, um die Aktionen zu prüfen und zu speichern.", ToolTipIcon.Warning);
+            _balloonOpensActions = true;
+        }
+
+        /// <summary>
+        /// Autostart mit Adminrechten startet die EXE ohne Rückfrage erhöht: Liegt sie in einem Ordner, in den auch Programme
+        /// ohne Adminrechte schreiben dürfen, könnte ein solches Programm sie austauschen. Dann warnen (nicht im Projektordner).
+        /// </summary>
+        private void CheckProtectedExe()
+        {
+            if (Demo.Active) return;
+            string exe = Application.ExecutablePath;
+            if (File.Exists(Path.Combine(Path.GetDirectoryName(exe), "Erstellen.bat"))) return;
+            var ui = System.Threading.Tasks.TaskScheduler.FromCurrentSynchronizationContext();
+            System.Threading.Tasks.Task.Factory.StartNew(() => Autostart.IsEnabled() && !ActionSeal.Protected(exe))
+                .ContinueWith(t =>
+                {
+                    if (t.Exception != null || !t.Result || _exiting) return;
+                    Log.Warn("Autostart mit Adminrechten, aber {0} liegt in einem ungeschützten Ordner.", exe);
+                    ShowBalloon("Monitor Dimmer startet mit Adminrechten aus einem Ordner, in den auch andere Programme schreiben dürfen.\r\n" +
+                        "Bitte nach „Programme“ verschieben und den Autostart neu einrichten.", ToolTipIcon.Warning);
+                }, ui);
+        }
 
         // ================================================================== Update-Prüfung
 
@@ -1217,7 +1297,12 @@ namespace MonitorDimmer
             if (_available != null)
             {
                 var a = new UpdateStatus(UpdateKind.Available, "Version " + _available.Version + " verfügbar", when);
-                if (_installError != null)
+                if (_available.Problem != null)
+                {
+                    // nicht signiert bzw. Signatur ungültig: Kurzmeldung mit „Details“, installiert wird nicht
+                    a = new UpdateStatus(UpdateKind.Available, a.Title, _available.Problem) { More = _available.ProblemDetail ?? "" };
+                }
+                else if (_installError != null)
                 {
                     // automatisches Aktualisieren gescheitert: Kurzmeldung mit „Details“ statt der letzten Prüfung
                     a = new UpdateStatus(UpdateKind.Available, a.Title, "Update fehlgeschlagen.") { More = _installError.Message };
@@ -1276,7 +1361,7 @@ namespace MonitorDimmer
                         {
                             // Hinweis im Infobereich einmal je Version und Programmstart
                             _notifiedVersion = release.Version;
-                            bool canInstall = Updater.InstallBlocker() == null && !string.IsNullOrEmpty(release.ZipUrl);
+                            bool canInstall = Updater.CanInstall(release);
                             ShowBalloon("Neue Version " + release.Version + " verfügbar – installiert ist " + AppInfo.Version + ".\r\n" +
                                 (canInstall ? "Klicken zum Aktualisieren." : "Download über die Release-Seite (Menü)."), ToolTipIcon.Info);
                             _balloonIsUpdate = canInstall;
@@ -1316,7 +1401,7 @@ namespace MonitorDimmer
         {
             _autoUpdateTimer.Stop();
             if (_exiting || Demo.Active || !Updater.Auto || !Updater.AutoInstall || _available == null || _installError != null) return false;
-            if (Updater.InstallBlocker() != null || string.IsNullOrEmpty(_available.ZipUrl)) return false;
+            if (!Updater.CanInstall(_available) || Updater.Busy) return false;
             if (BusyForUpdate())
             {
                 Log.Info("Automatisch aktualisieren: Monitor Dimmer ist beschäftigt - neuer Versuch in 5 Minuten.");
@@ -1337,7 +1422,8 @@ namespace MonitorDimmer
                     {
                         // ohne Meldung: Hinweisleiste bleibt, Kurzmeldung mit „Details“ im Info-Fenster
                         _installError = t.Exception.GetBaseException();
-                        Log.Error("Automatisch aktualisieren fehlgeschlagen: {0}", _installError.Message);
+                        Updater.ErrorLog("Automatisch aktualisieren fehlgeschlagen: " + _installError.Message +
+                            (_installError.Data.Contains("Detail") ? " - " + _installError.Data["Detail"] : ""));
                         RefreshUpdateBar();
                         return;
                     }
@@ -1357,7 +1443,31 @@ namespace MonitorDimmer
         {
             if (_available == null || _installing) return;
             var release = _available;
-            if (Updater.InstallBlocker() != null || string.IsNullOrEmpty(release.ZipUrl)) { OpenReleasePage(); return; } // Projektordner: nie ersetzen
+            if (Updater.Busy)
+            {
+                MessageBox.Show(Updater.Running, "Update", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            if (Updater.RepairPending)
+            {
+                // ein früheres Update wurde nicht abgeschlossen: erst die vorherige Version wiederherstellen
+                bool hidden = _main == null || _main.IsDisposed || !_main.Visible;
+                if (Updater.OfferRepair(_main != null && !_main.IsDisposed && _main.Visible ? _main : null, hidden))
+                {
+                    Log.Info("Vorherige Version wird wiederhergestellt - Monitor Dimmer startet gleich neu.");
+                    ExitThread();
+                }
+                return;
+            }
+            if (!Updater.CanInstall(release))
+            {
+                // Projektordner, nicht signiert oder ohne passendes ZIP: nie ersetzen, Release-Seite anbieten
+                string why = Updater.InstallBlocker() ?? (release.Problem != null ? "Monitor Dimmer installiert dieses Update nicht: " + release.Problem +
+                    (string.IsNullOrEmpty(release.ProblemDetail) ? "" : "\r\n\r\n" + release.ProblemDetail) : Updater.NoZip);
+                if (MessageBox.Show(why + "\r\n\r\nRelease-Seite auf GitHub öffnen?", "Update", MessageBoxButtons.YesNo, MessageBoxIcon.Information) == DialogResult.Yes)
+                    OpenReleasePage();
+                return;
+            }
             if (MessageBox.Show("Monitor Dimmer wird beendet, auf Version " + release.Version + " aktualisiert und neu gestartet. Einstellungen bleiben erhalten." +
                     "\r\n\r\nJetzt aktualisieren?",
                     "Update", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
@@ -1372,9 +1482,9 @@ namespace MonitorDimmer
                     _installing = false;
                     if (t.Exception != null)
                     {
-                        string msg = t.Exception.GetBaseException().Message;
-                        Log.Error("Update fehlgeschlagen: {0}", msg);
-                        MessageBox.Show(msg, "Update", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                        var err = t.Exception.GetBaseException();
+                        Updater.ErrorLog("Update fehlgeschlagen: " + err.Message + (err.Data.Contains("Detail") ? " - " + err.Data["Detail"] : ""));
+                        MessageBox.Show(err.Message, "Update", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                         return;
                     }
                     Log.Info("Update wird installiert - Monitor Dimmer startet gleich neu.");

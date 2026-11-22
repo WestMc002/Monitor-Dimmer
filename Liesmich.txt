@@ -5,6 +5,15 @@ Aktuelle Version: siehe Info-Fenster (Klick auf die Versionsnummer) bzw.
 Eigenschaften > Details der EXE. Vorgänger: Monitor Dimmer 1.3.2017.0120
 
 Versionen:
+  2.75.2026.1122 Updates nur noch signiert (Manifest mit Prüfsumme), sicheres
+                 Selbst-Update (begrenzte Downloads, Austausch mit
+                 Rücksicherung, Wiederherstellung nach Abbruch);
+                 Aktionen wie "Dienst beenden" laufen mit Adminrechten nur
+                 noch bestätigt, Befehle und Skripte nur aus geschützten
+                 Ordnern, Programme und Internetseiten immer ohne
+                 Adminrechte; Autostart mit Adminrechten nur aus einem
+                 geschützten Ordner; Update-Leiste bei wenig Platz
+                 zweizeilig
   2.74.2026.1119 Update-Leiste: runde Ecken der Knöpfe in der Farbe der
                  Leiste statt in Fensterfarbe
   2.73.2026.1118 Footer: Abstand der beiden Zeilen rechts passt jetzt auch
@@ -163,7 +172,9 @@ ERSTER START
    welchem Monitor gehört, und die Profile anpassen.
 3. Im Tray-Menü "Mit Windows starten (mit Adminrechten)" anhaken. Das legt
    eine Aufgabe "Monitor Dimmer" in der Aufgabenplanung an (Start 15 s nach
-   der Anmeldung, mit Adminrechten, ohne UAC-Abfrage).
+   der Anmeldung, mit Adminrechten, ohne UAC-Abfrage). Das geht nur, wenn
+   "Monitor Dimmer.exe" in einem geschützten Ordner liegt, z. B. unter
+   "C:\Program Files\Monitor Dimmer" (siehe "Adminrechte").
 
 
 WAS IST NEU
@@ -370,6 +381,13 @@ WAS IST NEU
   werden dabei entdimmt), ersetzt "Monitor Dimmer.exe" und Liesmich.txt und
   startet neu. Konfiguration, Spieleliste und Protokolle bleiben erhalten.
   Ohne Schreibrechte im Programmordner fragt Windows nach Adminrechten.
+  Installiert wird nur ein Update, dessen Manifest mit dem Schlüssel des
+  Herausgebers signiert ist (Monitor-Dimmer-<Version>.manifest im Release);
+  die Prüfsumme des ZIP kommt nur aus diesem Manifest. Läuft Monitor Dimmer
+  mit Adminrechten (Autostart), arbeitet das Update in einem geschützten
+  Ordner unter %ProgramData% und startet Monitor Dimmer danach wieder mit
+  Adminrechten. Bricht ein Update ab, stellt "Jetzt aktualisieren" zuerst die
+  vorherige Version wieder her.
   Im Projektordner (mit Erstellen.bat) wird nicht automatisch aktualisiert,
   dort öffnet sich stattdessen die Release-Seite.
   Info-Fenster > Updates: Stand mit Datum der letzten Prüfung, Knopf
@@ -385,6 +403,33 @@ WAS IST NEU
   sonst alle 5 Minuten erneut. Danach startet es von selbst neu, im
   Infobereich, wenn das Fenster vorher zu war. Liegt das Programm unter
   "Programme", fragt Windows bei jedem Update nach Administratorrechten.
+
+
+ADMINRECHTE
+-----------
+Monitor Dimmer startet über die Autostart-Aufgabe mit Adminrechten, damit
+Aktionen wie "Dienst beenden" ohne Rückfrage laufen. Die Konfiguration liegt
+aber unter %LOCALAPPDATA% und lässt sich von jedem Programm ändern. Deshalb:
+- Aktionen, die mit Adminrechten mehr dürfen (Programm beenden, Dienst
+  beenden/starten, Beendete wieder starten, Aufgabe ausführen/aktivieren/
+  deaktivieren, Befehl ausführen) und alte .bat-Skripte laufen mit
+  Adminrechten nur, wenn sie bestätigt sind: Beim Speichern unter "Aktionen"
+  legt Monitor Dimmer einen Prüfwert unter HKLM\SOFTWARE\Monitor Dimmer ab
+  (schreiben nur mit Adminrechten; ohne Adminrechte fragt Windows einmal
+  nach). Wurde die Konfiguration seitdem außerhalb von Monitor Dimmer
+  geändert, werden diese Aktionen übersprungen und ein Hinweis erscheint;
+  ein Klick darauf öffnet "Aktionen" zum Prüfen und Speichern.
+- Befehle und Skripte laufen mit Adminrechten nur aus geschützten Ordnern
+  (Besitzer und Schreibrechte nur Administratoren, SYSTEM bzw.
+  TrustedInstaller), z. B. Windows oder "Programme".
+- "Beendete wieder starten" startet mit Adminrechten nur Dienste, die eine
+  bestätigte Aktion "Dienst beenden" des Profils nennt.
+- Programme und Internetseiten öffnet Monitor Dimmer immer ohne Adminrechte.
+- Die Autostart-Aufgabe startet "Monitor Dimmer.exe" nur aus einem
+  geschützten Ordner, z. B. "C:\Program Files\Monitor Dimmer". Liegt sie
+  woanders, erscheint beim Start ein Hinweis.
+"Jetzt testen" unter "Aktionen" führt die Liste ohne Prüfwert aus (von Hand
+ausgelöst).
 
 
 HINWEIS ZU DEN SKRIPTEN

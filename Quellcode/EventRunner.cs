@@ -68,6 +68,13 @@ namespace MonitorDimmer
             string exe = Environment.ExpandEnvironmentVariables(h.Executable.Replace("{ResourcesFolderPath}", _resourcesFolder));
             string args = Environment.ExpandEnvironmentVariables(h.Arguments.Replace("{ResourcesFolderPath}", _resourcesFolder));
             Log.Info("Skript ({0}, {1}): \"{2}\" {3}", profileName, h.Type, exe, args);
+            // mit Adminrechten nur bestätigte Skripte aus geschützten Ordnern (siehe ActionSeal)
+            string blocked = ActionSeal.BlockedHandler(exe, args);
+            if (blocked != null)
+            {
+                Log.Warn("Skript übersprungen: {0}", blocked);
+                return;
+            }
 
             var psi = new ProcessStartInfo(exe, args)
             {

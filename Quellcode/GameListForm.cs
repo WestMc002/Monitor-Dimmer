@@ -649,6 +649,9 @@ namespace MonitorDimmer
             _list.Focus();
         }
 
+        /// <summary>Explorer nur über den festen Pfad (nie über den Suchpfad).</summary>
+        private static string Explorer { get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "explorer.exe"); } }
+
         private void OpenFolder()
         {
             var sel = SelectedPaths();
@@ -656,12 +659,12 @@ namespace MonitorDimmer
             string path = Environment.ExpandEnvironmentVariables(sel[0]);
             try
             {
-                if (File.Exists(path)) Process.Start("explorer.exe", "/select,\"" + path + "\"");
+                if (File.Exists(path)) Process.Start(Explorer, "/select,\"" + path + "\"");
                 else
                 {
                     string dir = Path.GetDirectoryName(path);
                     while (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir)) dir = Path.GetDirectoryName(dir);
-                    if (!string.IsNullOrEmpty(dir)) Process.Start("explorer.exe", "\"" + dir + "\"");
+                    if (!string.IsNullOrEmpty(dir)) Process.Start(Explorer, "\"" + dir + "\"");
                 }
             }
             catch { }

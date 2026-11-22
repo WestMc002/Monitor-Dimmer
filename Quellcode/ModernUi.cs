@@ -444,8 +444,7 @@ namespace MonitorDimmer
         {
             if (e.Button == MouseButtons.Left && _link.Contains(e.Location))
             {
-                try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(Url) { UseShellExecute = true }); }
-                catch { }
+                UserStarter.OpenUrl(Url); // mit Adminrechten den Browser trotzdem normal starten
             }
             base.OnMouseClick(e);
         }
@@ -1026,11 +1025,12 @@ namespace MonitorDimmer
 
         private static void Open(string path, bool notepadFallback)
         {
+            if (path.StartsWith("https://", StringComparison.OrdinalIgnoreCase)) { UserStarter.OpenUrl(path); return; }
             try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(path) { UseShellExecute = true }); }
             catch
             {
                 if (notepadFallback)
-                    try { System.Diagnostics.Process.Start("notepad.exe", "\"" + path + "\""); } catch { }
+                    try { System.Diagnostics.Process.Start(System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "notepad.exe"), "\"" + path + "\""); } catch { } // fester Pfad
             }
         }
     }

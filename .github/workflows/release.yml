@@ -1,10 +1,16 @@
 name: Release
 
-# Release v<Version> mit "Monitor-Dimmer-<Version>.zip" ("Monitor Dimmer.exe" + Liesmich.txt).
+# Release v<Version> aus dem signierten Release-Paket im Ordner Release: "Monitor-Dimmer-<Version>.zip"
+# ("Monitor Dimmer.exe" + Liesmich.txt) und "Monitor-Dimmer-<Version>.manifest" (signierte Pruefsumme).
+# Das Paket entsteht auf dem PC des Herausgebers (Erstellen.bat). Der Workflow baut nichts selbst:
+# Er prueft, dass ZIP und Manifest zur Version passen (Name, Version, SHA-256 - die Signatur prueft
+# erst Monitor Dimmer, der Schluessel ist nicht auf GitHub), und haengt beide an das Release.
 # Release-Seite: oben "Änderungen" (Punkte aus dem Commit-Text zur Version), darunter die Installation.
 # - Run workflow (Versionsnummer) oder Tag v<Version>: Release anlegen; gibt es es schon,
 #   wird nichts neu gebaut, nur der Release-Text aufgefrischt.
 # - Änderung dieser Datei auf main: Release-Texte aller vorhandenen Releases auffrischen.
+# - VORABVERSION: 'true' = neue Releases werden als "Pre-release" angelegt und vorhandene
+#   so markiert; für die erste stabile Version auf 'false' stellen.
 on:
   push:
     branches:
@@ -16,11 +22,14 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version, z. B. 2.43.2026.1101'
+        description: 'Version, z. B. 2.75.2026.1122'
         required: true
 
 permissions:
   contents: write
+
+env:
+  VORABVERSION: 'false'
 
 jobs:
   release:
@@ -52,6 +61,8 @@ jobs:
 
       - name: Release-Texte erstellen
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()   # Umlaute aus git richtig lesen
           New-Item -ItemType Directory -Path 'notes' -Force | Out-Null
@@ -63,52 +74,55 @@ jobs:
             $body = git log -1 --format=%b $sha
             $items = @($body -split "`r?`n" | Where-Object { $_ -match '^\s*[-*] ' } | ForEach-Object { '- ' + ($_.Trim() -replace '^[-*]\s+', '') })
             if ($items.Count -eq 0) { $items = @('- siehe Liesmich.txt') }
-            $lines = @('## Änderungen', '') + $items + @(
+            # Texte mit Variablen ohne typografische Anführungszeichen (sonst ParserError in "…")
+            $head = @()
+            # Signatur-Hinweis nur bei signierten Releases (Manifest im Ordner Release bzw. schon angehängt)
+            $signed = Test-Path -LiteralPath "Release\Monitor-Dimmer-$ver.manifest"
+            if (-not $signed) {
+              $names = @(gh release view "v$ver" --repo "${{ github.repository }}" --json assets --jq '.assets[].name' 2>$null)
+              $signed = $names -contains "Monitor-Dimmer-$ver.manifest"
+            }
+            $sig = @()
+            if ($signed) { $sig = @("Signatur: ``Monitor-Dimmer-$ver.manifest`` ist die signierte Prüfsumme des ZIP. Monitor Dimmer installiert Updates nur, wenn diese Signatur gültig ist.", '') }
+            $lines = $head + @('## Änderungen', '') + $items + @(
               '',
               '## Installation',
               '',
-              "1. ``Monitor-Dimmer-$ver.zip`` herunterladen und ``Monitor Dimmer.exe`` in einen eigenen Ordner mit Schreibrechten entpacken, z. B. ``C:\Tools\Monitor Dimmer``.",
+              "1. ``Monitor-Dimmer-$ver.zip`` herunterladen und ``Monitor Dimmer.exe`` in einen eigenen Ordner entpacken. Für den Autostart mit Adminrechten muss der Ordner geschützt sein, z. B. ``C:\Program Files\Monitor Dimmer``.",
               '2. Starten. Einstellungen und Protokoll legt das Programm unter `%LOCALAPPDATA%\Monitor Dimmer` an (bis Version 2.59 lagen sie neben der EXE und werden beim ersten Start dorthin verschoben).',
               '3. Spiele über das Symbol im Infobereich zur Spieleliste hinzufügen.',
               '',
-              'Voraussetzung: Windows 10/11 mit .NET Framework 4 und Monitore mit DDC/CI. Ausführliche Beschreibung und Versionsgeschichte: `Liesmich.txt` im ZIP.'
-            )
+              'Voraussetzung: Windows 10/11 mit .NET Framework 4.5 oder neuer und Monitore mit DDC/CI. Ausführliche Beschreibung und Versionsgeschichte: `Liesmich.txt` im ZIP.',
+              ''
+            ) + $sig
             $lines | Set-Content -Path "notes\$ver.md" -Encoding utf8   # pwsh 7: UTF-8 ohne BOM
             Write-Host "---- $ver"; Get-Content "notes\$ver.md"
           }
 
-      - name: Kompilieren
+      - name: Release-Paket pruefen
         if: steps.ver.outputs.new != ''
         shell: pwsh
         run: |
           $ver = '${{ steps.ver.outputs.new }}'
-          @(
-            "[assembly: System.Reflection.AssemblyVersion(""$ver"")]"
-            "[assembly: System.Reflection.AssemblyFileVersion(""$ver"")]"
-            "[assembly: System.Reflection.AssemblyInformationalVersion(""$ver"")]"
-            "namespace MonitorDimmer { public static partial class AppInfo { public const string Version = ""$ver""; } }"
-          ) | Set-Content -Path 'Quellcode\VersionInfo.cs' -Encoding UTF8
-          $csc = "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
-          if (-not (Test-Path $csc)) { $csc = "$env:WINDIR\Microsoft.NET\Framework\v4.0.30319\csc.exe" }
-          & $csc /nologo /target:winexe /optimize+ /codepage:65001 "/out:Monitor Dimmer.exe" `
-            "/win32icon:Resources\MonitorDimmer.ico" "/resource:Resources\MonitorDimmer.ico,MonitorDimmer.ico" `
-            "/resource:Resources\GS-Logo.png,GS-Logo.png" "/resource:Resources\Default.xml,Default.xml" "/resource:Resources\Demo.xml,Demo.xml" `
-            /win32manifest:Quellcode\app.manifest `
-            /r:System.dll /r:System.Core.dll /r:System.Drawing.dll /r:System.Windows.Forms.dll `
-            /r:System.Xml.dll /r:System.Xml.Linq.dll /r:System.ServiceProcess.dll /r:System.Management.dll `
-            Quellcode\*.cs
-          if ($LASTEXITCODE -ne 0) { throw "Kompilieren fehlgeschlagen" }
-
-      - name: ZIP packen
-        if: steps.ver.outputs.new != ''
-        shell: pwsh
-        run: |
-          # GitHub ersetzt Leerzeichen in Dateinamen von Release-Anhängen durch Punkte -
-          # im ZIP bleibt der Originalname "Monitor Dimmer.exe" erhalten
-          $ver = '${{ steps.ver.outputs.new }}'
-          New-Item -ItemType Directory -Path 'paket' | Out-Null
-          Copy-Item 'Monitor Dimmer.exe', 'Liesmich.txt' -Destination 'paket'
-          Compress-Archive -Path 'paket\*' -DestinationPath "Monitor-Dimmer-$ver.zip"
+          $zip = "Release\Monitor-Dimmer-$ver.zip"
+          $man = "Release\Monitor-Dimmer-$ver.manifest"
+          if (-not (Test-Path -LiteralPath $zip)) { throw "Im Ordner Release fehlt $zip" }
+          if (-not (Test-Path -LiteralPath $man)) { throw "Im Ordner Release fehlt $man" }
+          $bytes = [IO.File]::ReadAllBytes($man)
+          if ([Array]::IndexOf($bytes, [byte]13) -ge 0) { throw 'Das Manifest enthaelt CR (Zeilenende muss LF sein, sonst passt die Signatur nicht)' }
+          $werte = @{}
+          foreach ($z in ([Text.Encoding]::UTF8.GetString($bytes) -split "`n")) { if ($z -match '^([A-Za-z0-9]+)=(.*)$') { $werte[$Matches[1]] = $Matches[2] } }
+          if ($werte['Programm'] -cne 'Monitor Dimmer') { throw "Manifest: Programm ist '$($werte['Programm'])'" }
+          if ($werte['Version'] -cne $ver) { throw "Manifest: Version ist '$($werte['Version'])', erwartet $ver" }
+          if ($werte['Datei'] -cne "Monitor-Dimmer-$ver.zip") { throw "Manifest: Datei ist '$($werte['Datei'])'" }
+          $hash = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($werte['SHA256'] -cne $hash) { throw "Manifest: SHA256 passt nicht zum ZIP ($hash)" }
+          if (-not $werte['Signatur']) { throw 'Manifest: Signatur fehlt' }
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $z = [IO.Compression.ZipFile]::OpenRead((Resolve-Path -LiteralPath $zip).Path)
+          try { $namen = @($z.Entries | ForEach-Object { $_.FullName }) } finally { $z.Dispose() }
+          if ($namen -notcontains 'Monitor Dimmer.exe') { throw 'Im ZIP fehlt Monitor Dimmer.exe' }
+          Write-Host "Release-Paket in Ordnung: $($namen -join ', ') - SHA256 $hash, Schluessel $($werte['Schluessel'])"
 
       - name: Release anlegen
         if: steps.ver.outputs.new != ''
@@ -117,7 +131,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $ver = '${{ steps.ver.outputs.new }}'
-          gh release create "v$ver" "Monitor-Dimmer-$ver.zip" --repo "${{ github.repository }}" --title "Monitor Dimmer $ver" --notes-file "notes\$ver.md"
+          $pre = @()
+          if ($env:VORABVERSION -eq 'true') { $pre = @('--prerelease') }
+          gh release create "v$ver" "Release\Monitor-Dimmer-$ver.zip" "Release\Monitor-Dimmer-$ver.manifest" --repo "${{ github.repository }}" --title "Monitor Dimmer $ver" --notes-file "notes\$ver.md" @pre
+          if ($LASTEXITCODE -ne 0) { throw "Release v$ver konnte nicht angelegt werden" }
 
       - name: Release-Texte auffrischen
         if: steps.ver.outputs.refresh != ''
@@ -125,7 +142,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          $pre = if ($env:VORABVERSION -eq 'true') { '--prerelease' } else { '--prerelease=false' }
           foreach ($ver in ('${{ steps.ver.outputs.refresh }}' -split ' ' | Where-Object { $_ })) {
-            gh release edit "v$ver" --repo "${{ github.repository }}" --notes-file "notes\$ver.md"
+            gh release edit "v$ver" --repo "${{ github.repository }}" --notes-file "notes\$ver.md" $pre
             if ($LASTEXITCODE -ne 0) { throw "Release-Text v$ver konnte nicht aktualisiert werden" }
           }

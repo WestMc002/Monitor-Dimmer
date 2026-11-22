@@ -52,7 +52,13 @@ namespace MonitorDimmer
             return sb.ToString();
         }
 
-        public bool HasChanges { get { return State() != _initial; } }
+        /// <summary>
+        /// Mit Adminrechten noch nicht bestätigt (Prüfwert fehlt oder passt nicht): Die Seite gilt als geändert, damit
+        /// „Speichern“ den Stand bestätigt (globale Vorgabe: Wirkung nach außen erst beim Speichern).
+        /// </summary>
+        private readonly bool _confirm;
+
+        public bool HasChanges { get { return _confirm || State() != _initial; } }
 
         public string CheckInput() { return null; }
 
@@ -71,8 +77,9 @@ namespace MonitorDimmer
             get { return _profiles.Where(p => p.RemoveHandlers).Select(p => p.Source.Name).ToList(); }
         }
 
-        public ActionsForm(AppConfig config, string resourcesFolder, string selectProfile, Icon icon)
+        public ActionsForm(AppConfig config, string resourcesFolder, string selectProfile, Icon icon, bool confirm)
         {
+            _confirm = confirm;
             _resourcesFolder = resourcesFolder;
             _profiles = config.Profiles.Where(p => !p.IsUndimmed).Select(p => new ProfileData
             {
@@ -168,8 +175,11 @@ namespace MonitorDimmer
             actions.Controls.Add(left);
             ButtonRow.Fit(actions, left, null); // schmal: Knöpfe nur mit Symbol („Speichern“ und „Abbrechen“ hat das Hauptfenster)
 
-            var info = new InfoBanner("Die Aktionen laufen nacheinander im Hintergrund. Dienste und Energiesparpläne brauchen Adminrechte.\n" +
-                "Doppelklick bearbeitet, Entf entfernt. Ins Protokoll kommt jede Aktion mit Ergebnis.", k) { Dock = DockStyle.Bottom };
+            var info = new InfoBanner(confirm
+                ? "Mit Adminrechten laufen Aktionen wie „Dienst beenden“ erst, wenn sie hier bestätigt sind. Bitte die Listen prüfen und\n" +
+                  "„Speichern“ wählen. Befehle und Skripte laufen mit Adminrechten nur aus geschützten Ordnern (z. B. unter „Programme“)."
+                : "Die Aktionen laufen nacheinander im Hintergrund. Dienste und Energiesparpläne brauchen Adminrechte.\n" +
+                  "Doppelklick bearbeitet, Entf entfernt. Ins Protokoll kommt jede Aktion mit Ergebnis.", k) { Dock = DockStyle.Bottom };
 
             body.Controls.Add(grid);
             body.Controls.Add(top);
@@ -503,7 +513,7 @@ namespace MonitorDimmer
                 var lines = new List<string>();
                 foreach (var a in list)
                 {
-                    string r = ActionExecutor.Execute(a, profileName);
+                    string r = ActionExecutor.Execute(a, profileName, true); // von Hand ausgelöst
                     Log.Info("Test-Aktion: {0} -> {1}", ActionTypes.Describe(a), r);
                     lines.Add(ActionTypes.Describe(a) + "\n      → " + r);
                 }

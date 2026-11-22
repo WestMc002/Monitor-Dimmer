@@ -302,6 +302,8 @@ namespace MonitorDimmer
             _updatePage = page;
             _updateLater = later;
             _updateBar.Text = "Neue Version " + version + " verfügbar – installiert ist " + Ui.Version + ".";
+            _updateBar.Headline = "Neue Version " + version;
+            _updateBar.Detail = "Installiert ist " + Ui.Version;
             _updateBar.Install.Enabled = canInstall;
             if (_navTip != null) _navTip.SetToolTip(_updateBar.Install, canInstall ? "Programm beenden, auf die neue Version aktualisieren und neu starten" : blocker);
             if (!_updateHost.Visible)

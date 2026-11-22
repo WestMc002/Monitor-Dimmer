@@ -95,7 +95,7 @@ namespace MonitorDimmer
 
                         // Hauptfenster mit Navigation, je Seite ein Bild
                         var games = new PageDef { Text = "Spieleliste", Glyph = MenuHelper.Game, Create = () => new GameListForm(() => cfg, (p, l) => { }, l => { }, icon) };
-                        var actions = new PageDef { Text = "Aktionen", Glyph = MenuHelper.Actions, Create = () => new ActionsForm(cfg, temp, dimmed.Name, icon) };
+                        var actions = new PageDef { Text = "Aktionen", Glyph = MenuHelper.Actions, Create = () => new ActionsForm(cfg, temp, dimmed.Name, icon, false) };
                         var hotkeys = new PageDef { Text = "Tastenkürzel", Glyph = MenuHelper.Keyboard, Create = () => new HotkeyForm(cfg, k => "", icon) };
                         var monitors = new PageDef { Text = "Monitore", Glyph = MenuHelper.Monitor, Create = () => new MonitorForm(manager, () => cfg, () => dimmed, icon) };
                         var schedule = new PageDef { Text = "Zeitplan", Glyph = MenuHelper.Clock, Create = () => new ScheduleForm(cfg, icon) };

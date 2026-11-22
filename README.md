@@ -40,17 +40,17 @@ Die Screenshots zeigen erfundene Beispieldaten. Sie entstehen automatisch beim E
 - **Monitore** – grafische Übersicht mit Anordnung und aktuellen Werten; jeder Monitor behält seine Nummer, auch wenn Windows die Reihenfolge ändert oder ein Monitor fehlt; Hinweis, wenn ein Monitor nicht reagiert
 - **Ein Fenster** – Monitore, Spieleliste, Aktionen, Zeitplan und Tastenkürzel als Seiten mit Navigation (Doppelklick auf das Tray-Symbol); Speichern und Abbrechen gelten für alle Seiten gemeinsam, Rückfrage bei ungespeicherten Änderungen
 - **Sicherheit** – beim Beenden, Abmelden und nach Abstürzen werden die Monitore entdimmt; die Konfiguration wird vor jedem Speichern versioniert gesichert
-- **Autostart** – mit Adminrechten über die Aufgabenplanung, ohne UAC-Abfrage bei jeder Anmeldung
-- **Updates** – sieht höchstens einmal am Tag unter Releases nach einer neuen Version; Installation mit einem Klick im Tray-Menü (Konfiguration bleibt erhalten, abschaltbar im Info-Fenster)
+- **Autostart** – mit Adminrechten über die Aufgabenplanung, ohne UAC-Abfrage bei jeder Anmeldung; nur aus einem geschützten Ordner (z. B. unter „Programme“). Aktionen wie „Dienst beenden“ laufen mit Adminrechten nur, wenn sie in Monitor Dimmer gespeichert (bestätigt) wurden; Programme und Internetseiten öffnet Monitor Dimmer immer ohne Adminrechte
+- **Updates** – sieht kurz nach jedem Start unter Releases nach einer neuen Version; Installation mit einem Klick im Tray-Menü (Konfiguration bleibt erhalten, abschaltbar im Info-Fenster). Installiert werden nur signierte Updates (`Monitor-Dimmer-<Version>.manifest` im Release)
 
 ## Installation
 
 1. Unter [Releases](../../releases) die neueste `Monitor-Dimmer-<Version>.zip` herunterladen.
-2. `Monitor Dimmer.exe` (und `Liesmich.txt`) in einen eigenen Ordner entpacken, z. B. `C:\Tools\Monitor Dimmer` oder `C:\Program Files\Monitor Dimmer`.
+2. `Monitor Dimmer.exe` (und `Liesmich.txt`) in einen eigenen Ordner entpacken, z. B. `C:\Program Files\Monitor Dimmer` (geschützter Ordner, nötig für den Autostart mit Adminrechten).
 3. Starten. Beim ersten Start warnt Windows möglicherweise („Der Computer wurde durch Windows geschützt“), weil die EXE nicht signiert ist: auf „Weitere Informationen“ und dann „Trotzdem ausführen“ klicken. Einstellungen und Protokoll legt das Programm unter `%LOCALAPPDATA%\Monitor Dimmer` an (`Configurations` und `TraceLogs`).
 4. Im Tray-Menü unter „Monitore anzeigen …“ prüfen, welche Nummer zu welchem Monitor gehört, und die Profile anpassen.
 
-Voraussetzungen: Windows 10 oder 11 (.NET Framework 4 ist dort vorhanden) und Monitore, die DDC/CI unterstützen (meist im Monitormenü einschaltbar).
+Voraussetzungen: Windows 10 oder 11 (.NET Framework 4.5 oder neuer ist dort vorhanden) und Monitore, die DDC/CI unterstützen (meist im Monitormenü einschaltbar).
 Für Aktionen wie „Dienst beenden“ braucht das Programm Adminrechte (Autostart mit Adminrechten im Tray-Menü unter Einstellungen).
 
 ## Selbst kompilieren

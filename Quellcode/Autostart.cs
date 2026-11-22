@@ -14,12 +14,37 @@ using System.Text;
 namespace MonitorDimmer
 {
     /// <summary>
-    /// Autostart über die Aufgabenplanung mit höchsten Rechten. So laufen auch die Skripte
+    /// Autostart über die Aufgabenplanung mit höchsten Rechten. So laufen auch Aktionen wie „Dienst beenden“
     /// (net stop TeamViewer usw.) mit Adminrechten, ohne bei jeder Anmeldung nachzufragen.
+    /// Abweichung von den globalen Vorgaben („Kein Autostart mit Administratorrechten“, entschieden 22.11.2026, wie Sync
+    /// Pilot): Aktionen mit Adminrechten nur mit Prüfwert (ActionSeal), Programme starten ohne Adminrechte, die Aufgabe
+    /// nur für eine EXE in einem geschützten Ordner, eingetragen über PowerShell -EncodedCommand (keine Datei, die ein
+    /// anderes Programm zwischen Schreiben und Eintragen austauschen könnte).
     /// </summary>
     internal static class Autostart
     {
         public const string TaskName = "Monitor Dimmer";
+
+        /// <summary>schtasks.exe nur über den festen Systempfad (nie über den Suchpfad).</summary>
+        private static string SchTasks { get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "schtasks.exe"); } }
+
+        /// <summary>Projektordner (Erstellen.bat neben der EXE): beim Entwickeln nicht sperren.</summary>
+        private static bool InProjectFolder(string exePath)
+        {
+            try { return File.Exists(Path.Combine(Path.GetDirectoryName(exePath), "Erstellen.bat")); } catch { return false; }
+        }
+
+        /// <summary>
+        /// Darf die Aufgabe diese EXE mit Adminrechten starten? Nur aus einem geschützten Ordner (sonst könnte ein Programm
+        /// ohne Adminrechte die EXE austauschen). null = ja, sonst der Grund.
+        /// </summary>
+        public static string ExeBlocker(string exePath)
+        {
+            if (InProjectFolder(exePath) || ActionSeal.Protected(exePath)) return null;
+            return "Monitor Dimmer liegt in einem Ordner, in den auch Programme ohne Administratorrechte schreiben dürfen (" +
+                   Path.GetDirectoryName(exePath) + "). Mit Adminrechten startet Windows nur eine EXE aus einem geschützten Ordner, " +
+                   "z. B. unter „Programme“. Bitte Monitor Dimmer dorthin verschieben und den Autostart dann einrichten.";
+        }
 
         public static bool IsElevated
         {
@@ -37,7 +62,7 @@ namespace MonitorDimmer
         {
             try
             {
-                var psi = new ProcessStartInfo("schtasks.exe", "/Query /TN \"" + TaskName + "\" /XML")
+                var psi = new ProcessStartInfo(SchTasks, "/Query /TN \"" + TaskName + "\" /XML")
                 {
                     UseShellExecute = false,
                     CreateNoWindow = true,
@@ -75,6 +100,12 @@ namespace MonitorDimmer
             Log.Info("Autostart zeigt auf \"{0}\" statt \"{1}\" - wird angepasst", cmd, exePath);
             if (!IsElevated)
                 return "Der Programmordner wurde verschoben. Bitte im Menü \u201eMit Windows starten\u201c einmal aus- und wieder einschalten.";
+            string blocker = ExeBlocker(exePath);
+            if (blocker != null)
+            {
+                Log.Warn("Autostart nicht angepasst: {0}", blocker);
+                return "Der Programmordner wurde verschoben. Der Autostart mit Adminrechten wurde nicht angepasst, weil der neue Ordner nicht geschützt ist.";
+            }
             return Enable(exePath) ? "Autostart wurde auf den neuen Programmordner angepasst." : "Autostart konnte nicht angepasst werden.";
         }
 
@@ -82,7 +113,7 @@ namespace MonitorDimmer
         {
             try
             {
-                var psi = new ProcessStartInfo("schtasks.exe", "/Query /TN \"" + TaskName + "\"")
+                var psi = new ProcessStartInfo(SchTasks, "/Query /TN \"" + TaskName + "\"")
                 {
                     UseShellExecute = false,
                     CreateNoWindow = true,
@@ -122,16 +153,24 @@ namespace MonitorDimmer
                 "  <Actions Context=\"Author\"><Exec><Command>\"" + SecurityElement.Escape(exePath) + "\"</Command>" +
                 "<WorkingDirectory>" + SecurityElement.Escape(Path.GetDirectoryName(exePath)) + "</WorkingDirectory></Exec></Actions>\r\n" +
                 "</Task>\r\n";
-            string tmp = Path.Combine(Path.GetTempPath(), "MonitorDimmerTask.xml");
-            File.WriteAllText(tmp, xml, Encoding.Unicode);
-            try
-            {
-                return RunSchtasks("/Create /F /TN \"" + TaskName + "\" /XML \"" + tmp + "\"");
-            }
-            finally
-            {
-                try { File.Delete(tmp); } catch { }
-            }
+            if (ExeBlocker(exePath) != null) return false;
+            // Aufgabenbeschreibung steht im Skript selbst (-EncodedCommand); das Skript schreibt sie unter zufälligem Namen
+            // in %SystemRoot%\Temp (dort schreiben nur Administratoren), trägt sie ein und löscht sie wieder
+            string ps =
+                "$ErrorActionPreference = 'Stop'\r\n" +
+                "$xml = " + ActionSeal.Ps(xml) + "\r\n" +
+                "$sch = Join-Path ([Environment]::SystemDirectory) 'schtasks.exe'\r\n" +
+                "try {\r\n" +
+                "  $file = Join-Path (Join-Path $env:SystemRoot 'Temp') ('MonitorDimmer_' + [Guid]::NewGuid().ToString('N') + '.xml')\r\n" +
+                "  $fs = New-Object IO.FileStream($file, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)\r\n" +
+                "  try { $w = New-Object IO.StreamWriter($fs, [Text.Encoding]::Unicode); $w.Write($xml); $w.Flush() } finally { $fs.Dispose() }\r\n" +
+                "  try { & $sch /Create /F /TN " + ActionSeal.Ps(TaskName) + " /XML $file | Out-Null; $rc = $LASTEXITCODE } finally { Remove-Item -LiteralPath $file -Force -ErrorAction SilentlyContinue }\r\n" +
+                "  exit $rc\r\n" +
+                "} catch { exit 1 }";
+            int rc = ActionSeal.RunElevated(ps);
+            Log.Info("Autostart eintragen -> Exitcode {0}", rc);
+            if (rc == -1) Log.Warn("Adminrechte für die Aufgabenplanung wurden abgelehnt");
+            return rc == 0;
         }
 
         public static bool Disable()
@@ -141,7 +180,7 @@ namespace MonitorDimmer
 
         private static bool RunSchtasks(string args)
         {
-            var psi = new ProcessStartInfo("schtasks.exe", args)
+            var psi = new ProcessStartInfo(SchTasks, args)
             {
                 WindowStyle = ProcessWindowStyle.Hidden
             };
