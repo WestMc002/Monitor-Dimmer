@@ -38,10 +38,19 @@ namespace MonitorDimmer
                 return;
             }
             string configName = "Default";
+            string badConfig = null;
             foreach (var a in args)
             {
-                if (a.StartsWith("/config:", StringComparison.OrdinalIgnoreCase)) configName = a.Substring(8);
+                if (a.StartsWith("/config:", StringComparison.OrdinalIgnoreCase))
+                {
+                    // nur ein kurzer Name (Buchstaben, Ziffern, Leerzeichen, _ - .), kein Pfad: Konfiguration und
+                    // Protokoll bleiben in ihren Ordnern
+                    string name = a.Substring(8).Trim();
+                    if (IsValidConfigName(name)) configName = name; else badConfig = name;
+                }
                 if (string.Equals(a, "--nach-update", StringComparison.OrdinalIgnoreCase)) TrayApp.AfterUpdate = true;
+                // Versuchskennung hinter --nach-update (ab 2.81): Ergebnis genau dieses Versuchs lesen
+                if (Updater.IsAttemptId(a)) TrayApp.AfterUpdateAttempt = a;
                 if (string.Equals(a, "/tray", StringComparison.OrdinalIgnoreCase)) TrayApp.AfterUpdateTray = true; // nach dem Update nur im Infobereich
             }
 
@@ -63,8 +72,9 @@ namespace MonitorDimmer
 
                 var migrated = MigrateLayout(_baseDir);
                 migrated.AddRange(AppData.MoveFromProgramFolder(_baseDir));
-                Log.Init(Path.Combine(AppData.TraceLogs, configName + ".log"));
+                Log.Init(InFolder(AppData.TraceLogs, configName + ".log"));
                 foreach (var m in migrated) Log.Info(m);
+                if (badConfig != null) Log.Warn("/config: ungültiger Name \"{0}\" - es gilt \"Default\"", badConfig);
                 Application.EnableVisualStyles();
                 Application.SetCompatibleTextRenderingDefault(false);
                 Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
@@ -144,11 +154,28 @@ namespace MonitorDimmer
             }
             catch { }
         }
+
+        /// <summary>Name für /config: Buchstaben, Ziffern, Leerzeichen, _ - . (höchstens 64 Zeichen, kein „..“, kein Pfad).</summary>
+        internal static bool IsValidConfigName(string name)
+        {
+            return !string.IsNullOrEmpty(name) && name.Length <= 64 && !name.Contains("..") &&
+                   System.Text.RegularExpressions.Regex.IsMatch(name, @"^[A-Za-z0-9][A-Za-z0-9 _.\-]*$");
+        }
+
+        /// <summary>Datei im Ordner: vollständigen Pfad bilden und prüfen, dass er wirklich in diesem Ordner liegt.</summary>
+        internal static string InFolder(string folder, string file)
+        {
+            string dir = Path.GetFullPath(folder).TrimEnd('\\') + "\\";
+            string full = Path.GetFullPath(Path.Combine(dir, file));
+            if (!full.StartsWith(dir, StringComparison.OrdinalIgnoreCase) || full.IndexOf('\\', dir.Length) >= 0)
+                throw new ArgumentException("Ungültiger Dateiname: " + file);
+            return full;
+        }
     }
 
     /// <summary>
     /// Ablage der Laufzeitdaten unter %LOCALAPPDATA%\Monitor Dimmer (wie Wake on LAN): Configurations (Konfiguration,
-    /// Sicherungen, Update.ini, Fenster.ini, Beendete Programme.txt), TraceLogs und UnhandledExceptions.
+    /// Sicherungen, Update.ini, Fenster.ini, Beendete Programme - &lt;Konfiguration&gt;.txt), TraceLogs und UnhandledExceptions.
     /// Bis Version 2.59 lagen diese Ordner neben der EXE; sie werden beim ersten Start einmalig hierher verschoben.
     /// </summary>
     internal static class AppData

@@ -43,6 +43,8 @@ namespace MonitorDimmer
         public static bool AfterUpdateTray;
         /// <summary>Gesetzt beim Neustart nach einem Update (--nach-update).</summary>
         public static bool AfterUpdate;
+        /// <summary>Versuchskennung aus --nach-update (32 Hex-Zeichen) oder null (ältere Skripte).</summary>
+        public static string AfterUpdateAttempt;
 
         private DimmingProfile _current;          // gerade angewendetes Profil (Monitore)
         private DimmingProfile _scriptProfile;    // Profil, dessen "Applied"-Skripte zuletzt gelaufen sind
@@ -91,7 +93,7 @@ namespace MonitorDimmer
         {
             _baseDir = baseDir;
             _dataDir = dataDir;
-            _configPath = Path.Combine(dataDir, "Configurations", configName + ".xml"); // %LOCALAPPDATA%\Monitor Dimmer
+            _configPath = Program.InFolder(Path.Combine(dataDir, "Configurations"), configName + ".xml"); // %LOCALAPPDATA%\Monitor Dimmer
             _resourcesDir = Path.Combine(baseDir, "Resources");
 
             Log.Info("==== Start Monitor Dimmer {0} (Benutzer {1}\\{2}, {3}) ====",
@@ -106,6 +108,8 @@ namespace MonitorDimmer
             }
             _config = AppConfig.Load(_configPath);
             ActionSeal.SetConfig(_config, _configPath, _resourcesDir); // Prüfwert für Aktionen mit Adminrechten
+            StoppedRegistry.Init(configName); // eigene Datei je Konfiguration
+            StoppedRegistry.Cleanup(); // alte Einträge samt Startparametern entfernen
             Accent.Enabled = _config.UseWindowsAccentColor;
             Log.SetMaxSize(_config.TraceLogFileMaxSize);
             LogConfigSummary();
@@ -169,7 +173,7 @@ namespace MonitorDimmer
             // ---------- Update-Prüfung (wie Fensterpositionen wiederherstellen) ----------
             if (AfterUpdate)
             {
-                string result = Updater.LastResult();
+                string result = Updater.LastResult(AfterUpdateAttempt);
                 if (result != null && result.StartsWith("OK"))
                 {
                     Log.Info("Update auf Version {0} installiert.", result.Substring(2).Trim());
@@ -221,6 +225,7 @@ namespace MonitorDimmer
             _updateTimer.Tick += (s, e) =>
             {
                 _updateTimer.Interval = 6 * 60 * 60 * 1000;
+                StoppedRegistry.Cleanup(); // auch bei tagelangem Betrieb
                 CheckForUpdates(false, firstCheck);
                 firstCheck = false;
             };
@@ -1448,6 +1453,7 @@ namespace MonitorDimmer
                 MessageBox.Show(Updater.Running, "Update", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
+            Updater.QuietCleanup(); // unter der Sperre still aufräumen, was nichts verändert hat
             if (Updater.RepairPending)
             {
                 // ein früheres Update wurde nicht abgeschlossen: erst die vorherige Version wiederherstellen
@@ -1512,7 +1518,10 @@ namespace MonitorDimmer
             Log.Info("Windows wird abgemeldet/heruntergefahren");
             _exiting = true;
             if ((_current != null && !_current.IsUndimmed) || ScheduleDimmed)
-                _monitors.ApplySync(_config.Undimmed, "Windows wird beendet", 3000);
+            {
+                string r = _monitors.ApplySync(_config.Undimmed, "Windows wird beendet", 3000);
+                if (r != null) Log.Warn("Monitore beim Abmelden eventuell noch gedimmt: {0}", r);
+            }
         }
 
         protected override void ExitThreadCore()
@@ -1526,7 +1535,10 @@ namespace MonitorDimmer
                 {
                     _current = _config.Undimmed;
                     _applied = _current;
-                    _monitors.ApplySync(_config.Undimmed, "Programmende", 5000);
+                    string r = _monitors.ApplySync(_config.Undimmed, "Programmende", 5000);
+                    // hing der DDC-Thread noch an einem älteren Befehl, einmal nachfassen (der neue Auftrag kommt als Nächstes dran)
+                    if (r != null) r = _monitors.ApplySync(_config.Undimmed, "Programmende, zweiter Versuch", 5000);
+                    if (r != null) Log.Error("Monitore beim Beenden eventuell noch gedimmt: {0}", r);
                 }
                 if (_scriptProfile != null && !_scriptProfile.IsUndimmed)
                 {

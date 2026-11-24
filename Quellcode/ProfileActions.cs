@@ -43,7 +43,7 @@ namespace MonitorDimmer
 
         public static readonly Info[] All =
         {
-            new Info { Id = "KillProcess", Title = "Programm beenden", ValueLabel = "Programm (exe)", Glyph = '\uE711', Hint = "Beendet alle laufenden Prozesse mit diesem Namen, z. B. gsyncit.exe." },
+            new Info { Id = "KillProcess", Title = "Programm beenden", ValueLabel = "Programm (exe)", Glyph = '\uE711', Hint = "Beendet das Programm mit genau diesem Pfad in Ihrer Sitzung. Nur mit Namen (z. B. gsyncit.exe) alle gleichnamigen Programme Ihrer Sitzung." },
             new Info { Id = "StartProgram", Title = "Programm starten", ValueLabel = "Programm", Glyph = '\uE768', HasArguments = true, Hint = "Startet das Programm, sofern es nicht schon läuft." },
             new Info { Id = "StopService", Title = "Dienst beenden", ValueLabel = "Dienst", Glyph = '\uE71A', Hint = "Beendet den Windows-Dienst und wartet höchstens 60 Sekunden. Braucht Adminrechte." },
             new Info { Id = "StartService", Title = "Dienst starten", ValueLabel = "Dienst", Glyph = '\uE768', Hint = "Startet den Windows-Dienst. Braucht Adminrechte." },
@@ -74,6 +74,19 @@ namespace MonitorDimmer
             else if (a.Type == "RestoreStopped") value = "Programme und Dienste aus \"Beim Aktivieren\"";
             return title + ":  " + value;
         }
+
+        /// <summary>
+        /// Für das Protokoll: ohne Argumente und ohne freien Befehlstext (können Kennwörter oder Tokens enthalten) –
+        /// nur Aktionsart und Ziel.
+        /// </summary>
+        public static string DescribeForLog(ActionDef a)
+        {
+            var info = Find(a.Type);
+            string title = info != null ? info.Title : a.Type;
+            if (a.Type == "Command") return title;
+            if (a.Type == "StartProgram") return title + ":  " + Path.GetFileName(a.Value ?? "") + (string.IsNullOrEmpty(a.Arguments) ? "" : " (mit Argumenten)");
+            return Describe(a);
+        }
     }
 
     /// <summary>Führt Aktionen aus. Wird im Hintergrund-Thread des EventRunner aufgerufen.</summary>
@@ -98,11 +111,9 @@ namespace MonitorDimmer
         public static string Execute(ActionDef a, string profile, bool trusted)
         {
             string v = Environment.ExpandEnvironmentVariables((a.Value ?? "").Trim());
-            if (!trusted)
-            {
-                string blocked = ActionSeal.Blocked(a);
-                if (blocked != null) return "übersprungen: " + blocked;
-            }
+            // auch im Test („trusted“) gelten die Schutzprüfungen; dort entfällt nur der Prüfwert (Einzelbestätigung im Fenster)
+            string blocked = ActionSeal.Blocked(a, !trusted);
+            if (blocked != null) return "übersprungen: " + blocked;
             try
             {
                 switch (a.Type)
@@ -110,7 +121,7 @@ namespace MonitorDimmer
                     case "KillProcess": return KillProcess(v, profile);
                     case "StartProgram": return StartProgram(v, Environment.ExpandEnvironmentVariables(a.Arguments ?? ""));
                     case "StopService": return StopService(v, profile);
-                    case "RestoreStopped": return RestoreStopped(profile, trusted);
+                    case "RestoreStopped": return RestoreStopped(profile);
                     case "StartService": return StartService(v);
                     case "PowerPlan": return PowerPlan(v);
                     case "AudioDevice": return AudioSwitcher.SetDefaultWaiting(v, 60);
@@ -133,59 +144,93 @@ namespace MonitorDimmer
             }
         }
 
-        private static string ExeName(string v)
-        {
-            string n = Path.GetFileName(v.Trim('"'));
-            if (n.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)) n = n.Substring(0, n.Length - 4);
-            return n;
-        }
-
-        /// <summary>Wie die Batch: erst normal beenden (Fenster schließen), nach 5 s hart beenden.</summary>
+        /// <summary>
+        /// Wie die Batch: erst normal beenden (Fenster schließen), nach 5 s hart beenden. Beendet werden nur eindeutig
+        /// bestimmte Prozesse (ProcessTargets): gleicher Pfad (bzw. Name, wenn nur ein Name eingetragen ist), eigene
+        /// Sitzung, eigenes Benutzerkonto. Jeder Prozess bleibt über ein offenes Handle gebunden, damit seine Prozess-ID
+        /// bis zum Beenden nicht an ein anderes Programm vergeben werden kann.
+        /// </summary>
         private static string KillProcess(string v, string profile)
         {
-            string name = ExeName(v);
-            if (!Running(name)) return "läuft nicht";
-            if (profile != null) StoppedRegistry.RememberProgram(profile, name);
-            RunHidden(Path.Combine(Environment.SystemDirectory, "taskkill.exe"), "/IM \"" + name + ".exe\"", 10000);
-            for (int i = 0; i < 10; i++)
+            var targets = ProcessTargets.Find(v);
+            try
             {
-                if (!Running(name)) return "beendet";
-                Thread.Sleep(500);
+                if (targets.Count == 0) return "läuft nicht";
+                // Nur ein Name eingetragen und Treffer aus verschiedenen Ordnern: nicht raten, welche Installation gemeint ist
+                if (!ProcessTargets.IsFullPath(v))
+                {
+                    int paths = targets.Select(t => t.Path).Distinct(StringComparer.OrdinalIgnoreCase).Count();
+                    if (paths > 1)
+                        return "übersprungen: " + paths + " Programme mit diesem Namen aus verschiedenen Ordnern - bitte in der Aktion den vollen Pfad auswählen";
+                }
+                // „Beendete wieder starten“ merkt sich genau diese Prozesse (Pfad und Startparameter)
+                if (profile != null) StoppedRegistry.RememberProgram(profile, targets);
+                foreach (var t in targets) ProcessTargets.CloseWindows(t);
+                for (int i = 0; i < 10; i++)
+                {
+                    if (targets.All(t => t.HasExited)) return "beendet";
+                    Thread.Sleep(500);
+                }
+                string error = null;
+                foreach (var t in targets.Where(x => !x.HasExited))
+                {
+                    string e = ProcessTargets.Terminate(t);
+                    if (e != null) error = e;
+                }
+                if (targets.All(t => t.HasExited)) return "reagierte nicht - hart beendet";
+                return "Fehler: läuft noch" + (error != null ? " (" + error + ")" : "");
             }
-            string error = null;
-            foreach (var p in Process.GetProcessesByName(name))
+            finally
             {
-                try { p.Kill(); p.WaitForExit(5000); }
-                catch (Exception ex) { error = ex.Message; }
-                finally { p.Dispose(); }
+                foreach (var t in targets) t.Dispose();
             }
-            if (!Running(name)) return "reagierte nicht - hart beendet";
-            return "Fehler: läuft noch" + (error != null ? " (" + error + ")" : "");
-        }
-
-        private static bool Running(string name)
-        {
-            var list = Process.GetProcessesByName(name);
-            foreach (var p in list) p.Dispose();
-            return list.Length > 0;
         }
 
         internal static string StartProgram(string path, string args)
         {
             path = path.Trim('"');
-            if (!File.Exists(path)) return "Fehler: Datei nicht gefunden";
-            if (Running(ExeName(path))) return "läuft bereits";
+            // Pfad unmittelbar vor dem Start prüfen (globale Vorgabe „Programmstarts“): nur eine lokale .exe, kein
+            // Netzwerkpfad und keine Verknüpfung (Reparse Point) im Pfad – deren Ziel kann sich unbemerkt ändern
+            string why = CheckStartPath(path);
+            if (why != null) return "übersprungen: " + why;
+            if (ProcessTargets.IsRunning(path)) return "läuft bereits";
             // Der Monitor Dimmer läuft mit Adminrechten - Programme aber normal (wie aus dem Startmenü) starten. Mit
             // Adminrechten nie erhöht starten: Pfad und Argumente kommen aus Dateien, die jedes Programm ändern kann.
             if (UserStarter.Start(path, args, Path.GetDirectoryName(path))) return "gestartet";
             if (Autostart.IsElevated) return "Fehler: Start ohne Adminrechte nicht möglich";
-            var psi = new ProcessStartInfo(path, args) { UseShellExecute = true, WorkingDirectory = Path.GetDirectoryName(path) };
-            using (Process.Start(psi)) { }
+            // die EXE direkt starten; die Shell nur, wenn Windows Adminrechte verlangt (ERROR_ELEVATION_REQUIRED, 740)
+            try
+            {
+                using (Process.Start(new ProcessStartInfo(path, args) { UseShellExecute = false, WorkingDirectory = Path.GetDirectoryName(path) })) { }
+            }
+            catch (System.ComponentModel.Win32Exception ex)
+            {
+                if (ex.NativeErrorCode != 740) throw;
+                using (Process.Start(new ProcessStartInfo(path, args) { UseShellExecute = true, WorkingDirectory = Path.GetDirectoryName(path) })) { }
+            }
             return "gestartet";
         }
 
+        /// <summary>null = Start erlaubt, sonst der Grund (nur .exe, lokal, ohne Reparse Point im Pfad).</summary>
+        internal static string CheckStartPath(string path)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(path) || !Path.IsPathRooted(path)) return "kein vollständiger Pfad";
+                if (!string.Equals(Path.GetExtension(path), ".exe", StringComparison.OrdinalIgnoreCase)) return "nur .exe-Dateien werden gestartet";
+                if (ActionSeal.IsNetworkPath(path)) return "Programme auf Netzwerkpfaden werden nicht gestartet";
+                if (!File.Exists(path)) return "Datei nicht gefunden";
+                var fi = new FileInfo(path);
+                if ((fi.Attributes & FileAttributes.ReparsePoint) != 0) return "die Datei ist eine Verknüpfung (Reparse Point)";
+                for (var d = fi.Directory; d != null; d = d.Parent)
+                    if ((d.Attributes & FileAttributes.ReparsePoint) != 0) return "im Pfad liegt eine Verknüpfung (Reparse Point): " + d.FullName;
+                return null;
+            }
+            catch (Exception ex) { return "Pfad nicht prüfbar (" + ex.Message + ")"; }
+        }
+
         /// <summary>Startet die Dienste und Programme wieder, die "Beim Aktivieren" dieses Profils beendet wurden.</summary>
-        private static string RestoreStopped(string profile, bool trusted)
+        private static string RestoreStopped(string profile)
         {
             if (profile == null) return "kein Profil";
             var list = StoppedRegistry.Take(profile);
@@ -195,7 +240,8 @@ namespace MonitorDimmer
             foreach (var e in list.Where(x => x.Kind == "S"))
             {
                 // mit Adminrechten nur Dienste, die eine bestätigte Aktion „Dienst beenden“ dieses Profils nennt
-                if (!trusted && !ActionSeal.ServiceAllowed(profile, e.Path))
+                // auch im Test: die Liste stammt aus einer Datei, die jedes Programm ändern kann
+                if (!ActionSeal.ServiceAllowed(profile, e.Path))
                 {
                     Log.Warn("  Dienst {0} -> übersprungen: steht in keiner bestätigten Aktion \"Dienst beenden\"", e.Path);
                     failed++;
@@ -211,7 +257,8 @@ namespace MonitorDimmer
                 string r;
                 try { r = StartProgram(e.Path, e.Args); }
                 catch (Exception ex) { r = "Fehler: " + ex.Message; }
-                Log.Info("  Programm {0} {1} -> {2}", e.Path, e.Args, r);
+                // Startparameter nicht ins Protokoll (können Zugangsdaten enthalten)
+                Log.Info("  Programm {0}{1} -> {2}", e.Path, string.IsNullOrEmpty(e.Args) ? "" : " (mit Startparametern)", r);
                 if (r.StartsWith("Fehler")) { failed++; errors.Add(Path.GetFileName(e.Path)); } else ok++;
             }
             return ok + " gestartet" + (failed > 0 ? ", " + failed + " Fehler (" + string.Join(", ", errors) + ")" : "");
@@ -283,7 +330,7 @@ namespace MonitorDimmer
 
         private static string Command(string cmd)
         {
-            int code = RunHidden(Path.Combine(Environment.SystemDirectory, "cmd.exe"), "/c " + cmd, 120000, ActionSeal.CommandDir);
+            int code = RunHidden(Path.Combine(Environment.SystemDirectory, "cmd.exe"), "/d /c " + cmd, 120000, ActionSeal.CommandDir); // /d: ohne AutoRun aus der Registry
             return code == int.MinValue ? "läuft nach 2 Minuten noch" : "beendet (Exitcode " + code + ")";
         }
 
@@ -377,16 +424,17 @@ namespace MonitorDimmer
             return _planNames != null && guid != null && _planNames.TryGetValue(guid.Trim(), out n) ? n : guid;
         }
 
+        /// <summary>Laufende Programme der eigenen Sitzung mit vollständigem Pfad (eindeutig beim Beenden).</summary>
         public static List<Item> Processes()
         {
-            var names = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var p in Process.GetProcesses())
+            var paths = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var t in ProcessTargets.All())
             {
-                try { if (p.Id > 4) names.Add(p.ProcessName + ".exe"); }
-                catch { }
-                finally { p.Dispose(); }
+                paths.Add(t.Path);
+                t.Dispose();
             }
-            return names.Select(n => new Item { Value = n, Text = n }).ToList();
+            return paths.OrderBy(x => Path.GetFileName(x), StringComparer.OrdinalIgnoreCase).ThenBy(x => x, StringComparer.OrdinalIgnoreCase)
+                .Select(x => new Item { Value = x, Text = x }).ToList();
         }
 
         public static List<Item> Services()
@@ -726,54 +774,199 @@ namespace MonitorDimmer
         internal sealed class Entry
         {
             public string Profile, Kind, Path, Args;
+            /// <summary>Wann gemerkt (UTC). Einträge älter als MaxAge werden verworfen (Startparameter nicht unbegrenzt aufheben).</summary>
+            public DateTime Saved = DateTime.UtcNow;
         }
 
+        /// <summary>So lange bleiben gemerkte Programme (samt Startparametern) höchstens in der Datei.</summary>
+        private static readonly TimeSpan MaxAge = TimeSpan.FromDays(7);
+
+        /// <summary>Größer gilt die Datei als beschädigt (sie enthält nur wenige Zeilen).</summary>
+        private const long MaxFileSize = 1024 * 1024;
+
         private static readonly object Sync = new object();
-        private static List<Entry> _list;
+        private static string _config = "Default";
+
+        /// <summary>
+        /// Eine Datei je Konfiguration („Beendete Programme - &lt;Konfiguration&gt;.txt“): parallel laufende Instanzen mit
+        /// verschiedenen Konfigurationen kommen sich so nicht in die Quere. Lesen, Ändern und Speichern laufen zusätzlich
+        /// unter einer prozessübergreifenden Sperre (gleiche Konfiguration in zwei Sitzungen desselben Benutzers) und
+        /// ohne Zwischenspeicher im Prozess; geschrieben wird atomar (Hilfsdatei, dann ersetzen).
+        /// </summary>
+        public static void Init(string configName)
+        {
+            lock (Sync) _config = configName;
+        }
 
         private static string FilePath
+        {
+            get { return Program.InFolder(AppData.Configurations, "Beendete Programme - " + _config + ".txt"); }
+        }
+
+        /// <summary>Gemeinsame Datei bis 2.75 (alle Konfigurationen).</summary>
+        private static string OldFilePath
         {
             get { return System.IO.Path.Combine(AppData.Configurations, "Beendete Programme.txt"); }
         }
 
-        private static List<Entry> List
+        private static string MutexName(string path)
         {
-            get
+            using (var sha = System.Security.Cryptography.SHA256.Create())
             {
-                if (_list != null) return _list;
-                _list = new List<Entry>();
-                try
-                {
-                    if (File.Exists(FilePath))
-                        foreach (var line in File.ReadAllLines(FilePath, Encoding.UTF8))
-                        {
-                            var f = line.Split('\t');
-                            if (f.Length >= 3) _list.Add(new Entry { Profile = f[0], Kind = f[1], Path = f[2], Args = f.Length > 3 ? f[3] : "" });
-                        }
-                }
-                catch { }
-                return _list;
+                var hash = sha.ComputeHash(Encoding.UTF8.GetBytes(path.ToUpperInvariant()));
+                return "Global\\MonitorDimmer-Beendete-" + BitConverter.ToString(hash, 0, 12).Replace("-", "");
             }
         }
 
-        private static void Save()
+        /// <summary>Liest die Liste, lässt sie ändern (true = geändert) und speichert sie – alles unter der Sperre.</summary>
+        private static void Update(Func<List<Entry>, bool> change)
+        {
+            lock (Sync)
+            {
+                string path;
+                try { path = FilePath; }
+                catch (Exception ex) { Log.Warn("Beendete Programme: {0}", ex.Message); return; }
+                Mutex mutex = null;
+                bool owned = false;
+                try
+                {
+                    mutex = new Mutex(false, MutexName(path));
+                    try { owned = mutex.WaitOne(10000); }
+                    catch (AbandonedMutexException) { owned = true; }
+                    if (!owned) { Log.Warn("Beendete Programme: Datei gerade gesperrt, nichts geändert"); return; }
+                    Migrate(path);
+                    bool dirty;
+                    var list = Load(path, out dirty);
+                    if (change(list) || dirty) Save(path, list);
+                }
+                catch (Exception ex) { Log.Warn("Beendete Programme: {0}", ex.Message); }
+                finally
+                {
+                    if (owned) try { mutex.ReleaseMutex(); } catch { }
+                    if (mutex != null) mutex.Dispose();
+                }
+            }
+        }
+
+        /// <summary>
+        /// Übergang von der gemeinsamen Datei bis 2.75: Die Konfiguration „Default“ übernimmt sie (die Einträge nennen nur
+        /// Profilnamen). Ist sie älter als MaxAge, wird sie von jeder Instanz gelöscht.
+        /// </summary>
+        private static void Migrate(string path)
         {
             try
             {
-                if (_list.Count == 0) { if (File.Exists(FilePath)) File.Delete(FilePath); return; }
-                File.WriteAllLines(FilePath, _list.Select(e => e.Profile + "\t" + e.Kind + "\t" + e.Path + "\t" + (e.Args ?? "").Replace("\t", " ")), new UTF8Encoding(false));
+                string old = OldFilePath;
+                if (!File.Exists(old)) return;
+                if (DateTime.UtcNow - File.GetLastWriteTimeUtc(old) > MaxAge) { File.Delete(old); return; }
+                if (_config == "Default" && !File.Exists(path)) File.Move(old, path);
             }
-            catch (Exception ex) { Log.Warn("Beendete Programme speichern: {0}", ex.Message); }
+            catch (Exception ex) { Log.Warn("Beendete Programme: alte Datei nicht übernommen: {0}", ex.Message); }
+        }
+
+        private static List<Entry> Load(string path, out bool dirty)
+        {
+            dirty = false;
+            var list = new List<Entry>();
+            if (!File.Exists(path)) return list;
+            if (new FileInfo(path).Length > MaxFileSize)
+            {
+                Log.Warn("Beendete Programme: Datei zu groß, wird verworfen");
+                dirty = true;
+                return list;
+            }
+            foreach (var line in File.ReadAllLines(path, Encoding.UTF8))
+            {
+                var f = line.Split('\t');
+                if (f.Length < 3) { dirty = true; continue; }
+                DateTime saved;
+                // ohne Zeitpunkt (ältere Versionen): ab jetzt zählen
+                if (f.Length < 5 || !DateTime.TryParse(f[4], System.Globalization.CultureInfo.InvariantCulture,
+                        System.Globalization.DateTimeStyles.RoundtripKind, out saved)) { saved = DateTime.UtcNow; dirty = true; }
+                if (DateTime.UtcNow - saved.ToUniversalTime() > MaxAge)
+                {
+                    Log.Info("Beendete Programme: alter Eintrag verworfen ({0})", Clean(f[2]));
+                    dirty = true;
+                    continue;
+                }
+                if (f.Length > 3 && f[3].Length > 0 && !f[3].StartsWith("dpapi:")) dirty = true; // Klartext älterer Versionen verschlüsseln
+                list.Add(new Entry { Profile = f[0], Kind = f[1], Path = f[2], Args = f.Length > 3 ? Unprotect(f[3]) : "", Saved = saved.ToUniversalTime() });
+            }
+            return list;
+        }
+
+        private static void Save(string path, List<Entry> list)
+        {
+            if (list.Count == 0) { if (File.Exists(path)) File.Delete(path); return; }
+            // Startparameter nur verschlüsselt (DPAPI, nur dieses Benutzerkonto): sie können Zugangsdaten enthalten
+            string text = string.Join("\r\n", list.Select(e => Clean(e.Profile) + "\t" + Clean(e.Kind) + "\t" + Clean(e.Path) + "\t" +
+                Protect(e.Args ?? "") + "\t" + e.Saved.ToString("o", System.Globalization.CultureInfo.InvariantCulture))) + "\r\n";
+            var bytes = new UTF8Encoding(false).GetBytes(text);
+            string temp = path + ".teil-" + Guid.NewGuid().ToString("N");
+            try
+            {
+                using (var fs = new FileStream(temp, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                {
+                    fs.Write(bytes, 0, bytes.Length);
+                    fs.Flush(true);
+                }
+                if (File.Exists(path)) File.Replace(temp, path, null);
+                else File.Move(temp, path);
+            }
+            finally
+            {
+                try { if (File.Exists(temp)) File.Delete(temp); } catch { }
+            }
+        }
+
+        /// <summary>Tabulatoren und Zeilenumbrüche trennen Felder und Einträge – in Werten durch Leerzeichen ersetzen.</summary>
+        private static string Clean(string v)
+        {
+            return (v ?? "").Replace('\t', ' ').Replace('\r', ' ').Replace('\n', ' ');
+        }
+
+        private static readonly byte[] Entropy = Encoding.UTF8.GetBytes("Monitor Dimmer - Beendete Programme");
+
+        private static string Protect(string args)
+        {
+            if (string.IsNullOrEmpty(args)) return "";
+            try
+            {
+                return "dpapi:" + Convert.ToBase64String(System.Security.Cryptography.ProtectedData.Protect(
+                    Encoding.UTF8.GetBytes(args), Entropy, System.Security.Cryptography.DataProtectionScope.CurrentUser));
+            }
+            catch { return ""; } // lieber ohne Startparameter als im Klartext
+        }
+
+        private static string Unprotect(string stored)
+        {
+            if (string.IsNullOrEmpty(stored)) return "";
+            if (!stored.StartsWith("dpapi:")) return stored; // ältere Versionen (Klartext): wird beim nächsten Speichern verschlüsselt
+            try
+            {
+                return Encoding.UTF8.GetString(System.Security.Cryptography.ProtectedData.Unprotect(
+                    Convert.FromBase64String(stored.Substring(6)), Entropy, System.Security.Cryptography.DataProtectionScope.CurrentUser));
+            }
+            catch { return ""; }
+        }
+
+        /// <summary>
+        /// Alte Einträge (älter als 7 Tage) entfernen und Klartext älterer Versionen verschlüsseln – unabhängig davon, ob die
+        /// Liste gerade gebraucht wird (beim Start und regelmäßig im Betrieb).
+        /// </summary>
+        public static void Cleanup()
+        {
+            Update(list => false); // Load verwirft alte Einträge und meldet „geändert“
         }
 
         private static void Add(Entry e)
         {
-            lock (Sync)
+            Update(list =>
             {
-                if (List.Any(x => x.Profile == e.Profile && x.Kind == e.Kind && string.Equals(x.Path, e.Path, StringComparison.OrdinalIgnoreCase))) return;
-                List.Add(e);
-                Save();
-            }
+                if (list.Any(x => x.Profile == e.Profile && x.Kind == e.Kind && string.Equals(x.Path, e.Path, StringComparison.OrdinalIgnoreCase))) return false;
+                list.Add(e);
+                return true;
+            });
         }
 
         public static void RememberService(string profile, string name)
@@ -781,34 +974,41 @@ namespace MonitorDimmer
             Add(new Entry { Profile = profile, Kind = "S", Path = name, Args = "" });
         }
 
-        /// <summary>Liest Pfad und Startparameter des Hauptprozesses (ohne Unterprozesse wie bei Firefox/Discord).</summary>
-        public static void RememberProgram(string profile, string exeName)
+        /// <summary>
+        /// Merkt sich Pfad und Startparameter genau der Prozesse, die gleich beendet werden – nur die Hauptprozesse (ohne
+        /// Unterprozesse wie bei Firefox/Discord). Die Prozess-IDs sind über die offenen Handles gebunden.
+        /// </summary>
+        public static void RememberProgram(string profile, List<TargetProcess> targets)
         {
             try
             {
-                var procs = new List<Tuple<uint, uint, string, string>>();
-                using (var searcher = new System.Management.ManagementObjectSearcher(
-                    "SELECT ProcessId, ParentProcessId, ExecutablePath, CommandLine FROM Win32_Process WHERE Name = '" + exeName.Replace("'", "") + ".exe'"))
+                var ids = new HashSet<int>(targets.Select(t => t.Id));
+                var parents = new Dictionary<int, int>();
+                var commandLines = new Dictionary<int, string>();
+                string where = string.Join(" OR ", ids.Select(i => "ProcessId = " + i.ToString(System.Globalization.CultureInfo.InvariantCulture)));
+                using (var searcher = new System.Management.ManagementObjectSearcher("SELECT ProcessId, ParentProcessId, CommandLine FROM Win32_Process WHERE " + where))
                 using (var results = searcher.Get())
                 {
                     foreach (System.Management.ManagementObject o in results)
                     {
-                        procs.Add(Tuple.Create(Convert.ToUInt32(o["ProcessId"]), Convert.ToUInt32(o["ParentProcessId"]),
-                            o["ExecutablePath"] as string, o["CommandLine"] as string));
+                        int id = Convert.ToInt32(o["ProcessId"]);
+                        parents[id] = Convert.ToInt32(o["ParentProcessId"]);
+                        commandLines[id] = o["CommandLine"] as string;
                         o.Dispose();
                     }
                 }
-                var pids = new HashSet<uint>(procs.Select(p => p.Item1));
-                foreach (var p in procs.Where(x => !pids.Contains(x.Item2)))
+                foreach (var t in targets)
                 {
-                    string path = p.Item3;
-                    if (string.IsNullOrEmpty(path)) continue;
+                    int parent;
+                    if (parents.TryGetValue(t.Id, out parent) && ids.Contains(parent)) continue; // Unterprozess
                     // Store-Apps (WindowsApps) startet Windows selbst wieder, direkt starten geht nicht
-                    if (path.IndexOf("\\WindowsApps\\", StringComparison.OrdinalIgnoreCase) >= 0) continue;
-                    Add(new Entry { Profile = profile, Kind = "P", Path = path, Args = ArgsOf(p.Item4, path) });
+                    if (t.Path.IndexOf("\\WindowsApps\\", StringComparison.OrdinalIgnoreCase) >= 0) continue;
+                    string cmd;
+                    commandLines.TryGetValue(t.Id, out cmd);
+                    Add(new Entry { Profile = profile, Kind = "P", Path = t.Path, Args = ArgsOf(cmd, t.Path) });
                 }
             }
-            catch (Exception ex) { Log.Warn("Startparameter von {0}.exe nicht lesbar: {1}", exeName, ex.Message); }
+            catch (Exception ex) { Log.Warn("Startparameter von {0} nicht lesbar: {1}", targets.Count > 0 ? System.IO.Path.GetFileName(targets[0].Path) : "?", ex.Message); }
         }
 
         /// <summary>Kommandozeile ohne den Programmpfad am Anfang.</summary>
@@ -829,13 +1029,13 @@ namespace MonitorDimmer
         /// <summary>Holt die gemerkten Einträge des Profils (und löscht sie aus der Liste).</summary>
         public static List<Entry> Take(string profile)
         {
-            lock (Sync)
+            var result = new List<Entry>();
+            Update(list =>
             {
-                var result = List.Where(e => e.Profile == profile).ToList();
-                _list.RemoveAll(e => e.Profile == profile);
-                Save();
-                return result;
-            }
+                result = list.Where(e => e.Profile == profile).ToList();
+                return list.RemoveAll(e => e.Profile == profile) > 0;
+            });
+            return result;
         }
     }
 

@@ -12,6 +12,8 @@ ECHO.
 
 CD /D "%~dp0"
 SET "RESULT=0"
+REM Nicht aus einer Sicherung starten (Backup\<Name> v<Version>\Erstellen.bat)
+FOR %%I IN ("%CD%\..") DO IF /I "%%~nxI"=="Backup" GOTO :ERR_INBACKUP
 
 REM Einstellungen (projektspezifisch anpassen, Platzhalter in [ ] ersetzen)
 REM MAJOR     = Hauptversion
@@ -27,7 +29,7 @@ SET "NAMESPACE=MonitorDimmer"
 SET "SRCDIR=Quellcode"
 SET "RESDIR=Resources"
 SET "ICON=MonitorDimmer.ico"
-SET "EXTRAREFS=/win32manifest:Quellcode\app.manifest /resource:Resources\Default.xml,Default.xml /resource:Resources\Demo.xml,Demo.xml /r:System.Xml.dll /r:System.Xml.Linq.dll /r:System.ServiceProcess.dll /r:System.Management.dll"
+SET "EXTRAREFS=/win32manifest:Quellcode\app.manifest /resource:Resources\Default.xml,Default.xml /resource:Resources\Demo.xml,Demo.xml /r:System.Xml.dll /r:System.Xml.Linq.dll /r:System.ServiceProcess.dll /r:System.Management.dll /r:System.Security.dll"
 SET "EXE=%NAME%.exe"
 SET "NEWEXE=%NAME%.neu.exe"
 
@@ -132,6 +134,12 @@ ECHO Sichere nach %BAKDIR% ...
 ROBOCOPY "%CD%" "%CD%\%BAKDIR%" /E /XD "%CD%\Backup" "%CD%\Release" /XF "%NEWEXE%" "Erstellen.log" /R:1 /W:1 /NFL /NDL /NJH /NJS /NP >NUL
 IF ERRORLEVEL 8 GOTO :ERR_SNAPSHOT
 ECHO Gesichert.
+GOTO :Ende
+
+:ERR_INBACKUP
+COLOR C0
+SET "RESULT=1"
+ECHO Fehler: Diese Erstellen.bat liegt in einer Sicherung - bitte die im Projektordner starten.
 GOTO :Ende
 
 :ERR_CSC

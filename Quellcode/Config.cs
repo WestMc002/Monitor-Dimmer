@@ -32,7 +32,7 @@ namespace MonitorDimmer
     internal sealed class ProcessPattern
     {
         public string Raw;
-        private readonly Regex _regex;
+        private readonly string _glob;
         private readonly bool _fileNameOnly;
         public bool HasWildcards;
         public string Expanded;
@@ -43,25 +43,52 @@ namespace MonitorDimmer
             Expanded = Environment.ExpandEnvironmentVariables(raw.Trim());
             HasWildcards = Expanded.IndexOfAny(new[] { '*', '?' }) >= 0;
             _fileNameOnly = Expanded.IndexOf('\\') < 0 && Expanded.IndexOf('/') < 0;
-            string rx = "^" + Regex.Escape(Expanded.Replace('/', '\\')).Replace("\\*", ".*").Replace("\\?", ".") + "$";
-            _regex = new Regex(rx, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+            _glob = Expanded.Replace('/', '\\');
+        }
+
+        /// <summary>
+        /// Platzhaltervergleich für * und ? ohne reguläre Ausdrücke: höchstens Länge(Text) × Länge(Muster) Schritte, also
+        /// kein aufwendiges Zurückgehen bei vielen Sternen (Muster stammen aus der Konfiguration). Groß/klein egal.
+        /// </summary>
+        internal static bool Glob(string text, string pattern)
+        {
+            if (text == null || pattern == null) return false;
+            int t = 0, p = 0, star = -1, mark = 0;
+            while (t < text.Length)
+            {
+                if (p < pattern.Length && (pattern[p] == '?' || char.ToUpperInvariant(pattern[p]) == char.ToUpperInvariant(text[t])))
+                {
+                    t++; p++;
+                }
+                else if (p < pattern.Length && pattern[p] == '*')
+                {
+                    star = p++;
+                    mark = t;
+                }
+                else if (star >= 0)
+                {
+                    p = star + 1;
+                    t = ++mark;
+                }
+                else return false;
+            }
+            while (p < pattern.Length && pattern[p] == '*') p++;
+            return p == pattern.Length;
         }
 
         public bool Matches(string fullPath, string fileName)
         {
             if (_fileNameOnly)
-                return fileName != null && _regex.IsMatch(fileName);
-            return fullPath != null && _regex.IsMatch(fullPath);
+                return fileName != null && Glob(fileName, _glob);
+            return fullPath != null && Glob(fullPath, _glob);
         }
 
         /// <summary>Trifft das Muster nur über den Dateinamen zu (Fallback, wenn der volle Pfad nicht lesbar ist).</summary>
         public bool MatchesFileNameOnly(string fileName)
         {
             if (fileName == null) return false;
-            if (_fileNameOnly) return _regex.IsMatch(fileName);
-            string own = Path.GetFileName(Expanded);
-            string rx = "^" + Regex.Escape(own).Replace("\\*", ".*").Replace("\\?", ".") + "$";
-            return Regex.IsMatch(fileName, rx, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+            if (_fileNameOnly) return Glob(fileName, _glob);
+            return Glob(fileName, Path.GetFileName(_glob));
         }
     }
 

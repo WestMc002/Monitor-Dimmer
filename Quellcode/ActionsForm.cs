@@ -506,6 +506,22 @@ namespace MonitorDimmer
             string which = _active == _applied ? "\"Beim Aktivieren\"" : "\"Beim Deaktivieren\"";
             if (MessageBox.Show(this, "Die Liste " + which + " jetzt ausführen?\n\nProgramme und Dienste werden dabei wirklich beendet bzw. gestartet.",
                     "Jetzt testen", MessageBoxButtons.OKCancel, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2) != DialogResult.OK) return; // riskant: Abbrechen vorausgewählt
+            // mit Adminrechten: jede Aktion, die Adminrechte nutzen kann, einzeln bestätigen (der Test braucht keinen Prüfwert,
+            // die übrigen Schutzprüfungen gelten trotzdem)
+            if (ActionSeal.Active)
+            {
+                var privileged = list.Where(ActionSeal.IsAdminAction).ToList();
+                foreach (var a in privileged)
+                {
+                    var r = MessageBox.Show(this, "Diese Aktion läuft mit Administratorrechten:\n\n" + ActionTypes.Describe(a) +
+                            (string.IsNullOrEmpty(a.Arguments) ? "" : "\nArgumente: " + a.Arguments) +
+                            "\n\nAusführen? „Nein“ überspringt sie.",
+                            "Jetzt testen", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2);
+                    if (r == DialogResult.Cancel) return;
+                    if (r != DialogResult.Yes) list.Remove(a);
+                }
+                if (list.Count == 0) return;
+            }
             _test.Enabled = false;
             Cursor = Cursors.AppStarting;
             var t = new Thread(() =>
@@ -514,7 +530,7 @@ namespace MonitorDimmer
                 foreach (var a in list)
                 {
                     string r = ActionExecutor.Execute(a, profileName, true); // von Hand ausgelöst
-                    Log.Info("Test-Aktion: {0} -> {1}", ActionTypes.Describe(a), r);
+                    Log.Info("Test-Aktion: {0} -> {1}", ActionTypes.DescribeForLog(a), r);
                     lines.Add(ActionTypes.Describe(a) + "\n      → " + r);
                 }
                 try
@@ -690,7 +706,7 @@ namespace MonitorDimmer
                 string cur = Environment.ExpandEnvironmentVariables(GetValue().Trim('"'));
                 try { if (cur.Length > 0 && Directory.Exists(Path.GetDirectoryName(cur))) d.InitialDirectory = Path.GetDirectoryName(cur); } catch { }
                 if (d.ShowDialog(this) != DialogResult.OK) return;
-                _value.Text = Type.Id == "KillProcess" ? Path.GetFileName(d.FileName) : d.FileName;
+                _value.Text = d.FileName; // auch bei „Programm beenden“ der volle Pfad: beendet wird nur genau dieses Programm
             }
         }
 

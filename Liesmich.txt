@@ -5,6 +5,41 @@ Aktuelle Version: siehe Info-Fenster (Klick auf die Versionsnummer) bzw.
 Eigenschaften > Details der EXE. Vorgänger: Monitor Dimmer 1.3.2017.0120
 
 Versionen:
+  2.81.2026.1125 Sicherheit: "Befehl ausführen" und alte .bat-Skripte ohne
+                 AutoRun von cmd.exe, innere cmd-Aufrufe mit
+                 Adminrechten nur mit /d; Befehlstexte und Argumente
+                 nicht mehr im Protokoll;
+                 mit Adminrechten PowerShell nur mit -NoProfile bei jedem
+                 Aufruf und jede genannte Datei nur aus geschützten
+                 Ordnern; "Jetzt testen" fragt mit Adminrechten jede
+                 solche Aktion einzeln ab und prüft wie im Betrieb;
+                 Startparameter beendeter Programme verschlüsselt, nicht
+                 im Protokoll und höchstens 7 Tage aufbewahrt; /config:
+                 nur noch als Name ohne Pfad; Programmmuster ohne
+                 reguläre Ausdrücke (kein Hängen bei vielen *);
+                 Update-Prüfung lehnt zu tief verschachtelte Antworten ab;
+                 Selbst-Update auf dem Stand der anderen Programme
+                 (strengeres Wiederherstellungsjournal, Ergebnis je
+                 Versuch, sicherer Ablauf mit Rechteerhöhung);
+                 "Programm starten" nur für lokale .exe-Dateien ohne
+                 Verknüpfung im Pfad, Netzlaufwerke gelten nie als
+                 geschützt; Erstellen.bat startet nicht aus einer Sicherung;
+                 "Programm beenden" trifft nur noch das Programm mit dem
+                 eingetragenen Pfad in der eigenen Sitzung (Auswahl und
+                 "Durchsuchen" tragen den vollen Pfad ein; steht nur ein
+                 Name da und laufen Programme dieses Namens aus mehreren
+                 Ordnern, wird die Aktion übersprungen);
+                 "Beendete wieder starten" startet genau die beendeten
+                 Prozesse, Liste je Konfiguration und sicher gespeichert;
+                 beim Beenden hellt Monitor Dimmer die Monitore vorrangig
+                 auf (ältere Aufträge werden verworfen, abgelaufene laufen
+                 nicht mehr an) und protokolliert, wenn das nicht klappt;
+                 Shell-Namen in Argumenten blockieren keine Befehle mehr;
+                 Skripte, die eine bestätigte Aktion aufruft, starten
+                 PowerShell nur mit -NoProfile und cmd nur mit /d (geprüft
+                 je Aufruf als Startoption vor dem Skriptargument, .ps1 mit
+                 dem PowerShell-Parser von Windows auch über mehrere Zeilen;
+                 bloße Nennungen zählen nicht)
   2.75.2026.1122 Updates nur noch signiert (Manifest mit Prüfsumme), sicheres
                  Selbst-Update (begrenzte Downloads, Austausch mit
                  Rücksicherung, Wiederherstellung nach Abbruch);
@@ -131,7 +166,8 @@ Versionen:
 Neuentwicklung des Monitor Dimmer 1.3 (2017) mit Erweiterungen.
 Datenordner: Alle Einstellungen und Protokolle liegen unter
 %LOCALAPPDATA%\Monitor Dimmer (Configurations mit Default.xml, Sicherungen,
-Update.ini, Fenster.ini und Beendete Programme.txt; TraceLogs;
+Update.ini, Fenster.ini und "Beendete Programme - <Konfiguration>.txt";
+TraceLogs;
 UnhandledExceptions). Öffnen über Einstellungen > "Datenordner öffnen".
 Bis Version 2.59 lagen diese Ordner neben der EXE; beim ersten Start einer
 neueren Version werden sie einmalig dorthin verschoben (vorhandene Dateien
@@ -307,9 +343,11 @@ WAS IST NEU
   "Beendete wieder starten" (für "Beim Deaktivieren"): startet genau die
   Programme und Dienste wieder, die "Beim Aktivieren" dieses Profils beendet
   wurden - nur was vorher lief, mit den ursprünglichen Startparametern
-  (z. B. --minimized). Die Liste steht bis dahin in
-  Configurations\Beendete Programme.txt und übersteht so auch einen
-  Neustart. Store-Apps (z. B. Smartphone-Link) startet Windows selbst.
+  (z. B. --minimized). Die Liste steht bis dahin in Configurations\
+  "Beendete Programme - <Konfiguration>.txt" und übersteht so auch einen
+  Neustart; Einträge älter als 7 Tage werden verworfen, Startparameter
+  stehen verschlüsselt darin (nur für dieses Benutzerkonto lesbar) und
+  nicht im Protokoll. Store-Apps (z. B. Smartphone-Link) startet Windows selbst.
   Programme werden immer ohne Adminrechte gestartet (wie aus dem Startmenü),
   auch wenn der Monitor Dimmer mit Adminrechten läuft.
   Prüfung: Aktionen mit Fehler stehen rot in der Liste (exe-Datei fehlt,
@@ -334,7 +372,13 @@ WAS IST NEU
       </OnUnapplied>
     </Actions>
   Programm beenden: erst normal (wie Fenster schließen), reagiert es nach
-  5 s nicht, wird es hart beendet. Nicht vorhandene Dienste werden still
+  5 s nicht, wird es hart beendet. Beendet werden nur Programme der eigenen
+  Sitzung und des eigenen Benutzerkontos; steht ein voller Pfad in der
+  Aktion (Auswahlliste und "Durchsuchen" tragen ihn ein), nur das Programm
+  mit genau diesem Pfad. Steht nur ein Name da (ältere Aktionen, z. B.
+  gsyncit.exe), alle gleichnamigen Programme der eigenen Sitzung - laufen
+  sie aus verschiedenen Ordnern, wird die Aktion übersprungen (im Protokoll
+  steht der Hinweis, den vollen Pfad auszuwählen). Nicht vorhandene Dienste werden still
   übersprungen. Audiogerät wartet bis zu 60 s, bis das Gerät da ist (z. B.
   VR-Headset wird eingeschaltet). Energiesparplan versteht auch SCHEME_MIN
   (Höchstleistung), SCHEME_BALANCED und SCHEME_MAX.
@@ -421,7 +465,35 @@ aber unter %LOCALAPPDATA% und lässt sich von jedem Programm ändern. Deshalb:
   ein Klick darauf öffnet "Aktionen" zum Prüfen und Speichern.
 - Befehle und Skripte laufen mit Adminrechten nur aus geschützten Ordnern
   (Besitzer und Schreibrechte nur Administratoren, SYSTEM bzw.
-  TrustedInstaller), z. B. Windows oder "Programme".
+  TrustedInstaller), z. B. Windows oder "Programme". Das gilt für jede Datei,
+  die ein Befehl nennt. PowerShell läuft mit Adminrechten nur mit
+  -NoProfile, "Befehl ausführen" und alte .bat-Skripte immer ohne AutoRun
+  von cmd.exe (cmd /d); eine weitere Eingabeaufforderung im Befehl braucht
+  mit Adminrechten ebenfalls /d, "start" mit einer .bat-Datei ist dann
+  nicht erlaubt.
+  Skripte (.bat, .cmd, .ps1), die eine solche Aktion aufruft, prüft Monitor
+  Dimmer vorher: Jeder Start von PowerShell braucht -NoProfile vor dem
+  Skriptargument (-Command, -File ...), jeder Start von cmd /d vor /c - und
+  zwar beim jeweiligen Aufruf (direkt, mit & bzw. Pfad, nach if, nach
+  "for ... do" oder mit Start-Process, dort nur in -ArgumentList).
+  Ausgenommen ist der Befehl in "for /f ... in ('...')": Ihn startet cmd
+  intern, die Optionen lassen sich keinem Aufruf zuordnen - eine Shell darin
+  läuft nie mit Adminrechten, auch nicht mit -NoProfile bzw. /d (die Meldung
+  sagt das so). Ergebnis besser über eine eigene Zeile oder Datei weitergeben. .bat/.cmd werden
+  zeilenweise geprüft (Zeilen mit ^ am Ende zusammen), .ps1 mit dem
+  PowerShell-Parser von Windows als Ganzes, also auch Aufrufe über mehrere
+  Zeilen. Bloße Nennungen (Get-Process powershell, Write-Host "...", throw)
+  zählen nicht. Steht ein Shell-Name dagegen in einer Variablen, in einem
+  Aufruf, den die Prüfung nicht sicher einordnen kann (z. B. Invoke-
+  Expression, [Diagnostics.Process]::Start), oder als Inhalt eines
+  Shell-Befehls, oder werden Startoptionen erst zur Laufzeit berechnet,
+  läuft die Aktion mit Adminrechten nicht; die Meldung nennt Skript und
+  Zeile. Was ein Programm (.exe) oder eine nachgeladene Datei
+  intern startet, lässt sich so nicht prüfen - solche Programme und Skripte
+  bitte nur aus geschützten Ordnern aufrufen und eigene PowerShell-Aufrufe
+  immer mit -NoProfile.
+- Befehlstexte und Argumente von Aktionen stehen nicht im Protokoll (nur
+  Aktionsart und Ziel).
 - "Beendete wieder starten" startet mit Adminrechten nur Dienste, die eine
   bestätigte Aktion "Dienst beenden" des Profils nennt.
 - Programme und Internetseiten öffnet Monitor Dimmer immer ohne Adminrechte.
@@ -429,7 +501,9 @@ aber unter %LOCALAPPDATA% und lässt sich von jedem Programm ändern. Deshalb:
   geschützten Ordner, z. B. "C:\Program Files\Monitor Dimmer". Liegt sie
   woanders, erscheint beim Start ein Hinweis.
 "Jetzt testen" unter "Aktionen" führt die Liste ohne Prüfwert aus (von Hand
-ausgelöst).
+ausgelöst). Mit Adminrechten fragt es jede Aktion, die Adminrechte nutzen
+kann, einzeln ab; die übrigen Prüfungen (geschützte Ordner, PowerShell,
+Dienste bei "Beendete wieder starten") gelten auch im Test.
 
 
 HINWEIS ZU DEN SKRIPTEN

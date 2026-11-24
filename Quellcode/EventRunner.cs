@@ -50,7 +50,7 @@ namespace MonitorDimmer
                 {
                     var act = a;
                     if (!_queue.IsAddingCompleted)
-                        _queue.Add(() => Log.Info("Aktion ({0}): {1} -> {2}", pn, ActionTypes.Describe(act), ActionExecutor.Execute(act, pn)));
+                        _queue.Add(() => Log.Info("Aktion ({0}): {1} -> {2}", pn, ActionTypes.DescribeForLog(act), ActionExecutor.Execute(act, pn)));
                 }
             }
 
@@ -67,7 +67,8 @@ namespace MonitorDimmer
         {
             string exe = Environment.ExpandEnvironmentVariables(h.Executable.Replace("{ResourcesFolderPath}", _resourcesFolder));
             string args = Environment.ExpandEnvironmentVariables(h.Arguments.Replace("{ResourcesFolderPath}", _resourcesFolder));
-            Log.Info("Skript ({0}, {1}): \"{2}\" {3}", profileName, h.Type, exe, args);
+            // ohne Argumente ins Protokoll (können Kennwörter oder Tokens enthalten)
+            Log.Info("Skript ({0}, {1}): \"{2}\"{3}", profileName, h.Type, exe, string.IsNullOrEmpty(args) ? "" : " (mit Argumenten)");
             // mit Adminrechten nur bestätigte Skripte aus geschützten Ordnern (siehe ActionSeal)
             string blocked = ActionSeal.BlockedHandler(exe, args);
             if (blocked != null)
@@ -76,13 +77,16 @@ namespace MonitorDimmer
                 return;
             }
 
-            var psi = new ProcessStartInfo(exe, args)
-            {
-                UseShellExecute = false,
-                CreateNoWindow = h.Invisible,
-                WindowStyle = h.Invisible ? ProcessWindowStyle.Hidden : ProcessWindowStyle.Normal,
-                WorkingDirectory = _resourcesFolder
-            };
+            // .bat/.cmd über cmd.exe mit /d starten: Windows startet sie sonst mit „cmd /c“ ohne /d (AutoRun aus der Registry)
+            string ext = Path.GetExtension(exe).ToLowerInvariant();
+            bool batch = ext == ".bat" || ext == ".cmd";
+            var psi = batch
+                ? new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, "cmd.exe"), "/d /c \"\"" + exe + "\"" + (string.IsNullOrEmpty(args) ? "" : " " + args) + "\"")
+                : new ProcessStartInfo(exe, args);
+            psi.UseShellExecute = false;
+            psi.CreateNoWindow = h.Invisible;
+            psi.WindowStyle = h.Invisible ? ProcessWindowStyle.Hidden : ProcessWindowStyle.Normal;
+            psi.WorkingDirectory = _resourcesFolder;
             var sw = Stopwatch.StartNew();
             using (var p = Process.Start(psi))
             {

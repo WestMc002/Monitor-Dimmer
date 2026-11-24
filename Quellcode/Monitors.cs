@@ -50,7 +50,21 @@ namespace MonitorDimmer
         private const byte VcpBrightness = 0x10;
         private const byte VcpContrast = 0x12;
 
-        private readonly BlockingCollection<Action> _queue = new BlockingCollection<Action>();
+        /// <summary>Ein Auftrag im DDC-Thread; Seq = fortlaufende Nummer, Skip = Rückmeldung, wenn er verworfen wird.</summary>
+        private sealed class Job
+        {
+            public long Seq;
+            public Action Run;
+            public Action Skip;
+            /// <summary>0 = wartet, 1 = läuft, 2 = verworfen bzw. abgelaufen (wird nie mehr ausgeführt).</summary>
+            public int State;
+        }
+
+        private readonly BlockingCollection<Job> _queue = new BlockingCollection<Job>();
+        private long _seq;
+        /// <summary>Aufträge mit kleinerer Nummer sind überholt (beim Beenden: Aufhellen geht vor) und werden verworfen.</summary>
+        private long _skipBelow;
+        private readonly object _skipSync = new object();
         private readonly Thread _thread;
         private List<PhysicalMonitor> _monitors = new List<PhysicalMonitor>();
         private readonly string _mapFile;
@@ -74,33 +88,103 @@ namespace MonitorDimmer
 
         private void Worker()
         {
-            foreach (var action in _queue.GetConsumingEnumerable())
+            int skipped = 0;
+            foreach (var job in _queue.GetConsumingEnumerable())
             {
-                try { action(); }
+                if (Superseded(job))
+                {
+                    if (Interlocked.CompareExchange(ref job.State, 2, 0) == 0)
+                    {
+                        skipped++;
+                        if (job.Skip != null) try { job.Skip(); } catch { }
+                    }
+                    continue;
+                }
+                // atomar „läuft“ setzen; ist der Auftrag inzwischen abgelaufen (Zeitüberschreitung beim Aufrufer), nicht ausführen
+                if (Interlocked.CompareExchange(ref job.State, 1, 0) != 0)
+                {
+                    Log.Info("DDC/CI: abgelaufener Auftrag nicht ausgeführt");
+                    continue;
+                }
+                if (skipped > 0) { Log.Info("DDC/CI: {0} überholte Aufträge verworfen", skipped); skipped = 0; }
+                try { job.Run(); }
                 catch (Exception ex) { Log.Error("DDC/CI-Auftrag fehlgeschlagen: {0}", ex); }
             }
         }
 
+        private bool Superseded(Job job)
+        {
+            return job != null && job.Seq < Interlocked.Read(ref _skipBelow);
+        }
+
+        private Job NewJob()
+        {
+            return new Job { Seq = Interlocked.Increment(ref _seq) };
+        }
+
+        private void Add(Job job)
+        {
+            if (_queue.IsAddingCompleted) return;
+            try { _queue.Add(job); }
+            catch (InvalidOperationException) { } // beim Beenden schon geschlossen
+        }
+
         public void Enqueue(Action action)
         {
-            if (!_queue.IsAddingCompleted) _queue.Add(action);
+            var job = NewJob();
+            job.Run = action;
+            Add(job);
         }
 
         /// <summary>Führt eine Aktion im DDC-Thread aus und wartet höchstens timeoutMs darauf.</summary>
         public bool Invoke(Action action, int timeoutMs)
         {
+            return InvokeCore(job => action(), timeoutMs, false) == null;
+        }
+
+        /// <summary>
+        /// Führt eine Aktion im DDC-Thread aus und wartet höchstens timeoutMs. urgent: alle älteren Aufträge verwerfen
+        /// (auch einen laufenden Übergang abbrechen), damit dieser als Nächstes läuft. Ergebnis: null = ausgeführt,
+        /// sonst der Grund (Zeitüberschreitung, verworfen, Fehler).
+        /// </summary>
+        private string InvokeCore(Action<Job> action, int timeoutMs, bool urgent)
+        {
             using (var done = new ManualResetEvent(false))
             {
                 Exception error = null;
-                Enqueue(() =>
+                bool skipped = false;
+                var job = NewJob();
+                job.Run = () =>
                 {
-                    try { action(); }
+                    try { action(job); }
                     catch (Exception ex) { error = ex; }
                     finally { try { done.Set(); } catch (ObjectDisposedException) { } }
-                });
-                bool ok = done.WaitOne(timeoutMs);
-                if (error != null) Log.Error("DDC/CI: {0}", error);
-                return ok;
+                };
+                job.Skip = () =>
+                {
+                    skipped = true;
+                    try { done.Set(); } catch (ObjectDisposedException) { }
+                };
+                if (urgent)
+                    lock (_skipSync)
+                        if (job.Seq > Interlocked.Read(ref _skipBelow)) Interlocked.Exchange(ref _skipBelow, job.Seq);
+                Add(job);
+                if (!done.WaitOne(timeoutMs))
+                {
+                    // noch nicht gestartet: atomar als abgelaufen markieren, dann läuft er nie mehr an
+                    if (Interlocked.CompareExchange(ref job.State, 2, 0) == 0)
+                        return "Zeitüberschreitung nach " + timeoutMs + " ms - Auftrag verworfen, nicht ausgeführt";
+                    if (Thread.VolatileRead(ref job.State) == 1 && !done.WaitOne(0))
+                        return "Zeitüberschreitung nach " + timeoutMs + " ms - Monitorzugriff läuft noch (Ergebnis offen)";
+                    // gerade eben fertig geworden bzw. verworfen: wie unten auswerten
+                }
+                if (skipped) return "verworfen (ein neuerer dringender Auftrag)";
+                if (error != null)
+                {
+                    Log.Error("DDC/CI: {0}", error);
+                    return "Fehler: " + error.Message;
+                }
+                return null;
             }
         }
 
@@ -325,18 +409,33 @@ namespace MonitorDimmer
         {
             var values = new Dictionary<int, MonitorValues>(profile.Monitors);
             string name = profile.Name;
-            Enqueue(() => ApplyInternal(name, values, reason, true));
+            var job = NewJob();
+            job.Run = () => ApplyInternal(name, values, reason, true, job);
+            Add(job);
         }
 
-        /// <summary>Setzt die Werte eines Profils und wartet darauf (z. B. beim Beenden).</summary>
-        public void ApplySync(DimmingProfile profile, string reason, int timeoutMs)
+        /// <summary>
+        /// Setzt die Werte eines Profils und wartet darauf (beim Beenden, Abmelden und im Notfall). Ältere Aufträge in der
+        /// Warteschlange werden verworfen und ein laufender Übergang abgebrochen, damit das Aufhellen sofort drankommt.
+        /// Ergebnis: null = alle Monitore gesetzt, sonst der Grund (Zeitüberschreitung, Fehler, Monitore ohne Antwort).
+        /// </summary>
+        public string ApplySync(DimmingProfile profile, string reason, int timeoutMs)
         {
             var values = new Dictionary<int, MonitorValues>(profile.Monitors);
             string name = profile.Name;
-            Invoke(() => ApplyInternal(name, values, reason, false), timeoutMs); // ohne Überblenden: soll schnell gehen
+            int failed = 0;
+            string result = InvokeCore(job =>
+            {
+                if (_monitors.Count == 0) RefreshInternal(); // eine verworfene Aktualisierung nachholen
+                failed = ApplyInternal(name, values, reason, false, job); // ohne Überblenden: soll schnell gehen
+            }, timeoutMs, true);
+            if (result == null && failed > 0) result = failed + " Monitor(e) nicht gesetzt";
+            if (result != null) Log.Error("Profil \"{0}\" ({1}) nicht vollständig gesetzt: {2}", name, reason, result);
+            return result;
         }
 
-        private void ApplyInternal(string name, Dictionary<int, MonitorValues> values, string reason, bool fade)
+        /// <summary>Ergebnis: Zahl der Monitore, die nicht (vollständig) gesetzt wurden.</summary>
+        private int ApplyInternal(string name, Dictionary<int, MonitorValues> values, string reason, bool fade, Job self)
         {
             Log.Info("Profil \"{0}\" wird gesetzt ({1})", name, reason);
             var jobs = new List<KeyValuePair<PhysicalMonitor, MonitorValues>>();
@@ -350,15 +449,20 @@ namespace MonitorDimmer
                 }
                 jobs.Add(new KeyValuePair<PhysicalMonitor, MonitorValues>(m, kv.Value));
             }
+            int failed = 0; // nicht angeschlossene Monitore zählen nicht (z. B. Notebook ohne Dockingstation)
             if (fade && Smooth) Fade(jobs);
             foreach (var job in jobs)
             {
+                // ein dringender Auftrag (Aufhellen beim Beenden) wartet: diesen hier abbrechen
+                if (Superseded(self)) { Log.Info("  abgebrochen: ein dringender Auftrag wartet"); return failed; }
                 var m = job.Key;
                 bool ok = true;
                 if (job.Value.Brightness.HasValue) ok &= Write(m, VcpBrightness, "Helligkeit", job.Value.Brightness.Value, m.MaxBrightness);
                 if (job.Value.Contrast.HasValue) ok &= Write(m, VcpContrast, "Kontrast", job.Value.Contrast.Value, m.MaxContrast);
                 Report(m, ok);
+                if (!ok) failed++;
             }
+            return failed;
         }
 
         private const int FadeSteps = 6;
