@@ -5,6 +5,14 @@ Aktuelle Version: siehe Info-Fenster (Klick auf die Versionsnummer) bzw.
 Eigenschaften > Details der EXE. Vorgänger: Monitor Dimmer 1.3.2017.0120
 
 Versionen:
+  2.85.2026.1125 Update: Der Neustarthelfer liest seine Steuerdateien
+                 begrenzt (höchstens 256 Bytes, ein Zugriff); kann er das
+                 Update nur über die Prozess-ID verfolgen, wartet er höchstens
+                 2 Minuten auf das Ergebnis und startet ohne Ergebnis nicht neu;
+                 nach einer Wiederherstellung auf eine Version vor 2.81 zeigt
+                 er das Ergebnis selbst an; ein nicht abgeschlossenes Update
+                 aus 2.75 setzt Monitor Dimmer mit Adminrechten nicht zurück,
+                 sondern weist auf die Neuinstallation hin
   2.81.2026.1125 Sicherheit: "Befehl ausführen" und alte .bat-Skripte ohne
                  AutoRun von cmd.exe, innere cmd-Aufrufe mit
                  Adminrechten nur mit /d; Befehlstexte und Argumente

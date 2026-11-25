@@ -578,7 +578,6 @@ namespace MonitorDimmer
             Var(vars, "TargetId", TargetId);
             Var(vars, "TempRoot", Folder);
             Var(vars, "Log", logFile);
-            Var(vars, "SharedLog", "");
             vars.Append("$LegacyFallback = $false\n");
             Var(vars, "AttemptId", attemptId);
             Var(vars, "ReleaseId", attemptId);
@@ -661,7 +660,7 @@ namespace MonitorDimmer
             while (true)
             {
                 string ack = null;
-                try { if (File.Exists(ackFile)) ack = File.ReadAllText(ackFile).Trim(); } catch { }
+                ack = ReadSmall(ackFile);
                 if (ack == id.ToString(System.Globalization.CultureInfo.InvariantCulture)) break;
                 bool exited = true;
                 try { exited = helper.HasExited; } catch { }
@@ -732,6 +731,26 @@ namespace MonitorDimmer
             }
         }
 
+        /// <summary>
+        /// Steuerdatei aus dem Temp-Ordner einmal öffnen und aus demselben Stream höchstens 257 Bytes lesen; mehr als
+        /// 256 Bytes oder nicht lesbar = ungültig (null). Nicht erst die Größe prüfen und dann erneut öffnen.
+        /// </summary>
+        static string ReadSmall(string file)
+        {
+            try
+            {
+                using (var fs = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.Read))
+                {
+                    var buf = new byte[257];
+                    int n = 0, k;
+                    while (n < 257 && (k = fs.Read(buf, n, 257 - n)) > 0) n += k;
+                    if (n > 256) return null;
+                    return Encoding.ASCII.GetString(buf, 0, n).Trim();
+                }
+            }
+            catch { return null; }
+        }
+
         static bool WriteStartFile(string file, string text)
         {
             try
@@ -766,7 +785,6 @@ namespace MonitorDimmer
             Var(r, "StartFile", startFile);
             Var(r, "ReadyFile", readyFile);
             Var(r, "AckFile", ackFile);
-            Var(r, "SharedLog", !pipe && string.IsNullOrEmpty(attempt) ? LogFile : "");
             r.Append("$UserFiles = $").Append(pipe ? "false" : "true").Append("\n");
             r.Append("$Pipe = $").Append(pipe ? "true" : "false").Append("\n");
             r.Append("$Tray = $").Append(tray ? "true" : "false").Append("\n");
@@ -921,6 +939,18 @@ namespace MonitorDimmer
         /// Journal streng prüfen – dieselben Regeln wie im Reparatur-Skript. false = Stand ungeklärt (nichts aufräumen,
         /// Wiederherstellung endet mit OFFEN). Bei true enthält entries alle „Vorher“-Einträge in Reihenfolge.
         /// </summary>
+        /// <summary>Journal ohne Prüfsummen (Format 2.75) bzw. eine Sicherung ohne SHA-256?</summary>
+        static bool LacksHashes(string dir)
+        {
+            try
+            {
+                List<JournalEntry> entries;
+                if (!ReadJournal(dir, out entries)) return ReadMarker(dir) == MarkerKind.Legacy;
+                return entries.Exists(e => e.Kind == "Sicherung" && string.IsNullOrEmpty(e.Hash));
+            }
+            catch { return false; }
+        }
+
         static bool ReadJournal(string dir, out List<JournalEntry> entries)
         {
             entries = null;
@@ -1063,6 +1093,18 @@ namespace MonitorDimmer
             string dir = PendingRestore();
             if (dir == null) return false;
             ErrorLog("Nicht abgeschlossenes Update gefunden: " + dir);
+            // Mit Administratorrechten nur mit Prüfsummen im Journal (Journale von 2.75 haben keine): nicht zurücksetzen,
+            // sondern auf die Neuinstallation aus dem signierten Paket hinweisen
+            if (Autostart.IsElevated && LacksHashes(dir))
+            {
+                ErrorLog("Wiederherstellung nicht möglich: Journal ohne Prüfsummen (älteres Format).");
+                if (MessageBox.Show(owner,
+                    PendingText + "\n\nDie vorherige Version lässt sich nicht sicher wiederherstellen. Bitte Monitor Dimmer neu installieren: " +
+                    "das signierte Paket von der Download-Seite herunterladen und die EXE ersetzen.\n\nDownload-Seite jetzt öffnen?",
+                    "Update", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) == DialogResult.Yes)
+                    UserStarter.OpenUrl(ReleasesPage);
+                return false;
+            }
             if (MessageBox.Show(owner,
                 PendingText + "\n\nMonitor Dimmer stellt jetzt die vorherige Version wieder her und startet danach neu.\n\nJetzt wiederherstellen?",
                 "Update", MessageBoxButtons.YesNo, MessageBoxIcon.Information) != DialogResult.Yes) return false;
@@ -1097,7 +1139,8 @@ namespace MonitorDimmer
             StringBuilder vars = new StringBuilder();
             vars.Append("$ProcessId = ").Append(pid).Append("\n");
             // Die wiederhergestellte EXE kann älter als 2.81 sein: Start-Program prüft ihre Version. Ab 2.81 mit Kennung
-            // und eigener Ergebnisdatei, sonst ohne Kennung (ohne Adminrechte mit Kopie in die gemeinsame Update.log)
+            // und eigener Ergebnisdatei, sonst ohne --nach-update; das Ergebnis zeigt dann der Neustarthelfer selbst an
+            // (die gemeinsame Update.log wird nicht mehr beschrieben)
             Var(vars, "AttemptId", attemptId);
             vars.Append("$LegacyFallback = $true\n");
             Var(vars, "ReleaseId", attemptId);
@@ -1110,7 +1153,6 @@ namespace MonitorDimmer
             Var(vars, "LockName", LockName);
             Var(vars, "TargetId", TargetId);
             Var(vars, "Log", LogFor(attemptId));
-            Var(vars, "SharedLog", LogFile);
             vars.Append("$Elevated = $").Append(elevated ? "true" : "false").Append("\n");
             vars.Append("$Tray = $").Append(tray ? "true" : "false").Append("\n");
             // Reparatur-Skript als Datei im Temp-Ordner, auf der Befehlszeile nur Lader, Werte und SHA-256 (wie beim
@@ -1353,17 +1395,57 @@ function Test-OldInstance {
   if ($ProcessStart -gt 0) { try { return ($p.StartTime.ToUniversalTime().Ticks -eq $ProcessStart) } catch { return $true } }
   return $true
 }
+# Steuerdatei aus dem Temp-Ordner (Startdatei, Bestaetigung, Freigabe): einmal oeffnen und aus demselben Stream
+# hoechstens 257 Bytes lesen; mehr als 256 Bytes oder nicht lesbar = ungueltig ($null)
+function Read-Small([string]$p) {
+  try {
+    $fs = [System.IO.File]::Open($p, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)
+    try {
+      $b = New-Object byte[] 257
+      $n = 0
+      while ($n -lt 257) { $k = $fs.Read($b, $n, 257 - $n); if ($k -le 0) { break }; $n += $k }
+    } finally { $fs.Dispose() }
+    if ($n -gt 256) { return $null }
+    return [System.Text.Encoding]::ASCII.GetString($b, 0, $n).Trim()
+  } catch { return $null }
+}
+# Ergebnis dieses Versuchs selbst anzeigen (fuer wiederhergestellte Fassungen ohne Versuchskennung): hoechstens 16 KB
+# aus der eigenen Ergebnisdatei, ohne die gemeinsame Update.log anzufassen
+function Show-Result([string]$file) {
+  $text = $null
+  try {
+    $fs = [System.IO.File]::Open($file, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)
+    try {
+      $b = New-Object byte[] 16385
+      $n = 0
+      while ($n -lt 16385) { $k = $fs.Read($b, $n, 16385 - $n); if ($k -le 0) { break }; $n += $k }
+    } finally { $fs.Dispose() }
+    if ($n -le 16384) { $text = (New-Object System.Text.UTF8Encoding($false)).GetString($b, 0, $n).TrimStart([char]0xFEFF).Trim() }
+  } catch {}
+  if (-not $text) { $text = 'OFFEN Ergebnis des Updates unbekannt.' }
+  $icon = 'Warning'
+  if ($text -match '^OK ') { $icon = 'Information' }
+  $text = $text -replace '^(OK|FEHLER|ZURUECK|OFFEN) ', ''
+  try {
+    Add-Type -AssemblyName System.Windows.Forms
+    [void][System.Windows.Forms.MessageBox]::Show($text, 'Monitor Dimmer', 'OK', $icon)
+  } catch {}
+}
 # Neustart mit --nach-update und Versuchskennung. Nach einer Wiederherstellung ($LegacyFallback) kann die EXE aelter
-# als 2.81 sein und kennt keine Kennung: Dann nur --nach-update, und das Ergebnis wird erst unmittelbar vor dem Start
-# in die gemeinsame Datei kopiert, die aeltere Fassungen lesen ($SharedLog).
+# als 2.81 sein und kennt keine Kennung: Dann normal starten und das Ergebnis dieses Versuchs hier anzeigen. Die
+# gemeinsame Update.log der aelteren Fassungen wird nicht mehr beschrieben (parallele Versuche ueberschreiben sich nicht).
 function Start-Program([bool]$tray) {
-  $a = @('--nach-update')
   $modern = $true
   if ($LegacyFallback) { try { $modern = ([Version][System.Diagnostics.FileVersionInfo]::GetVersionInfo($Exe).FileVersion) -ge [Version]'2.81' } catch { $modern = $false } }
-  if ($modern -and $AttemptId) { $a += $AttemptId }
-  elseif ($SharedLog -and (Test-Path -LiteralPath $Log)) { try { Copy-Item -LiteralPath $Log -Destination $SharedLog -Force } catch {} }
-  if ($tray) { $a += '/tray' }
-  Start-Process -FilePath $Exe -ArgumentList $a
+  if ($modern) {
+    $a = @('--nach-update')
+    if ($AttemptId) { $a += $AttemptId }
+    if ($tray) { $a += '/tray' }
+    Start-Process -FilePath $Exe -ArgumentList $a
+    return
+  }
+  if ($tray) { Start-Process -FilePath $Exe -ArgumentList @('/tray') } else { Start-Process -FilePath $Exe }
+  Show-Result $Log
 }
 $ErrorActionPreference = 'Stop'
 # geschuetzten Arbeitsordner anlegen: Besitzer Administratoren, schreiben nur SYSTEM und Administratoren, lesen angemeldete Benutzer
@@ -1501,7 +1583,7 @@ try {
   # den Neustarthelfer ueber eine Pipe; ohne dessen Empfangsbestaetigung beendet es das Skript, bevor es etwas aendert.
   if ($Elevated -and -not ($ParentAdmin -and -not $ReleaseFile)) {
     $released = $false
-    try { if ((Get-Item -LiteralPath $ReleaseFile).Length -le 256) { $released = ([System.IO.File]::ReadAllText($ReleaseFile).Trim() -ceq $ReleaseId) } } catch {}
+    $released = ((Read-Small $ReleaseFile) -ceq $ReleaseId)
     if (-not $released) { throw 'Das Update wurde nicht freigegeben.' }
   }
   if ($Elevated) {
@@ -1787,17 +1869,57 @@ function Test-OldInstance {
   if ($ProcessStart -gt 0) { try { return ($p.StartTime.ToUniversalTime().Ticks -eq $ProcessStart) } catch { return $true } }
   return $true
 }
+# Steuerdatei aus dem Temp-Ordner (Startdatei, Bestaetigung, Freigabe): einmal oeffnen und aus demselben Stream
+# hoechstens 257 Bytes lesen; mehr als 256 Bytes oder nicht lesbar = ungueltig ($null)
+function Read-Small([string]$p) {
+  try {
+    $fs = [System.IO.File]::Open($p, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)
+    try {
+      $b = New-Object byte[] 257
+      $n = 0
+      while ($n -lt 257) { $k = $fs.Read($b, $n, 257 - $n); if ($k -le 0) { break }; $n += $k }
+    } finally { $fs.Dispose() }
+    if ($n -gt 256) { return $null }
+    return [System.Text.Encoding]::ASCII.GetString($b, 0, $n).Trim()
+  } catch { return $null }
+}
+# Ergebnis dieses Versuchs selbst anzeigen (fuer wiederhergestellte Fassungen ohne Versuchskennung): hoechstens 16 KB
+# aus der eigenen Ergebnisdatei, ohne die gemeinsame Update.log anzufassen
+function Show-Result([string]$file) {
+  $text = $null
+  try {
+    $fs = [System.IO.File]::Open($file, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)
+    try {
+      $b = New-Object byte[] 16385
+      $n = 0
+      while ($n -lt 16385) { $k = $fs.Read($b, $n, 16385 - $n); if ($k -le 0) { break }; $n += $k }
+    } finally { $fs.Dispose() }
+    if ($n -le 16384) { $text = (New-Object System.Text.UTF8Encoding($false)).GetString($b, 0, $n).TrimStart([char]0xFEFF).Trim() }
+  } catch {}
+  if (-not $text) { $text = 'OFFEN Ergebnis des Updates unbekannt.' }
+  $icon = 'Warning'
+  if ($text -match '^OK ') { $icon = 'Information' }
+  $text = $text -replace '^(OK|FEHLER|ZURUECK|OFFEN) ', ''
+  try {
+    Add-Type -AssemblyName System.Windows.Forms
+    [void][System.Windows.Forms.MessageBox]::Show($text, 'Monitor Dimmer', 'OK', $icon)
+  } catch {}
+}
 # Neustart mit --nach-update und Versuchskennung. Nach einer Wiederherstellung ($LegacyFallback) kann die EXE aelter
-# als 2.81 sein und kennt keine Kennung: Dann nur --nach-update, und das Ergebnis wird erst unmittelbar vor dem Start
-# in die gemeinsame Datei kopiert, die aeltere Fassungen lesen ($SharedLog).
+# als 2.81 sein und kennt keine Kennung: Dann normal starten und das Ergebnis dieses Versuchs hier anzeigen. Die
+# gemeinsame Update.log der aelteren Fassungen wird nicht mehr beschrieben (parallele Versuche ueberschreiben sich nicht).
 function Start-Program([bool]$tray) {
-  $a = @('--nach-update')
   $modern = $true
   if ($LegacyFallback) { try { $modern = ([Version][System.Diagnostics.FileVersionInfo]::GetVersionInfo($Exe).FileVersion) -ge [Version]'2.81' } catch { $modern = $false } }
-  if ($modern -and $AttemptId) { $a += $AttemptId }
-  elseif ($SharedLog -and (Test-Path -LiteralPath $Log)) { try { Copy-Item -LiteralPath $Log -Destination $SharedLog -Force } catch {} }
-  if ($tray) { $a += '/tray' }
-  Start-Process -FilePath $Exe -ArgumentList $a
+  if ($modern) {
+    $a = @('--nach-update')
+    if ($AttemptId) { $a += $AttemptId }
+    if ($tray) { $a += '/tray' }
+    Start-Process -FilePath $Exe -ArgumentList $a
+    return
+  }
+  if ($tray) { Start-Process -FilePath $Exe -ArgumentList @('/tray') } else { Start-Process -FilePath $Exe }
+  Show-Result $Log
 }
 # Ergebnis im geschuetzten Arbeitsordner je Versuch, als Letztes atomar veroeffentlichen (erst .teil, dann umbenennen).
 # Eine Reparatur nutzt den Arbeitsordner eines frueheren Versuchs: Der Name mit Versuchskennung haelt die Ergebnisse auseinander.
@@ -1863,7 +1985,7 @@ try {
   # den Neustarthelfer ueber eine Pipe; ohne dessen Empfangsbestaetigung beendet es das Skript, bevor es etwas aendert.
   if ($Elevated -and -not ($ParentAdmin -and -not $ReleaseFile)) {
     $released = $false
-    try { if ((Get-Item -LiteralPath $ReleaseFile).Length -le 256) { $released = ([System.IO.File]::ReadAllText($ReleaseFile).Trim() -ceq $ReleaseId) } } catch {}
+    $released = ((Read-Small $ReleaseFile) -ceq $ReleaseId)
     if (-not $released) { throw 'Die Wiederherstellung wurde nicht freigegeben.' }
   }
   # dieselbe Sperre wie das Update: nie zwei Wiederherstellungen oder Update und Wiederherstellung gleichzeitig
@@ -2050,18 +2172,57 @@ function Test-OldInstance {
   if ($ProcessStart -gt 0) { try { return ($p.StartTime.ToUniversalTime().Ticks -eq $ProcessStart) } catch { return $true } }
   return $true
 }
+# Steuerdatei aus dem Temp-Ordner (Startdatei, Bestaetigung, Freigabe): einmal oeffnen und aus demselben Stream
+# hoechstens 257 Bytes lesen; mehr als 256 Bytes oder nicht lesbar = ungueltig ($null)
+function Read-Small([string]$p) {
+  try {
+    $fs = [System.IO.File]::Open($p, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)
+    try {
+      $b = New-Object byte[] 257
+      $n = 0
+      while ($n -lt 257) { $k = $fs.Read($b, $n, 257 - $n); if ($k -le 0) { break }; $n += $k }
+    } finally { $fs.Dispose() }
+    if ($n -gt 256) { return $null }
+    return [System.Text.Encoding]::ASCII.GetString($b, 0, $n).Trim()
+  } catch { return $null }
+}
+# Ergebnis dieses Versuchs selbst anzeigen (fuer wiederhergestellte Fassungen ohne Versuchskennung): hoechstens 16 KB
+# aus der eigenen Ergebnisdatei, ohne die gemeinsame Update.log anzufassen
+function Show-Result([string]$file) {
+  $text = $null
+  try {
+    $fs = [System.IO.File]::Open($file, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)
+    try {
+      $b = New-Object byte[] 16385
+      $n = 0
+      while ($n -lt 16385) { $k = $fs.Read($b, $n, 16385 - $n); if ($k -le 0) { break }; $n += $k }
+    } finally { $fs.Dispose() }
+    if ($n -le 16384) { $text = (New-Object System.Text.UTF8Encoding($false)).GetString($b, 0, $n).TrimStart([char]0xFEFF).Trim() }
+  } catch {}
+  if (-not $text) { $text = 'OFFEN Ergebnis des Updates unbekannt.' }
+  $icon = 'Warning'
+  if ($text -match '^OK ') { $icon = 'Information' }
+  $text = $text -replace '^(OK|FEHLER|ZURUECK|OFFEN) ', ''
+  try {
+    Add-Type -AssemblyName System.Windows.Forms
+    [void][System.Windows.Forms.MessageBox]::Show($text, 'Monitor Dimmer', 'OK', $icon)
+  } catch {}
+}
 # Neustart mit --nach-update und Versuchskennung. Nach einer Wiederherstellung ($LegacyFallback) kann die EXE aelter
-# als 2.81 sein und kennt keine Kennung: Dann nur --nach-update; ohne Adminrechte wird das Ergebnis erst unmittelbar vor
-# dem Start in die gemeinsame Datei kopiert, die aeltere Fassungen lesen ($SharedLog). Mit Adminrechten lesen auch
-# aeltere Fassungen das Ergebnis aus dem geschuetzten Arbeitsordner.
+# als 2.81 sein und kennt keine Kennung: Dann normal starten und das Ergebnis dieses Versuchs hier anzeigen. Die
+# gemeinsame Update.log der aelteren Fassungen wird nicht mehr beschrieben (parallele Versuche ueberschreiben sich nicht).
 function Start-Program([bool]$tray) {
-  $a = @('--nach-update')
   $modern = $true
   if ($LegacyFallback) { try { $modern = ([Version][System.Diagnostics.FileVersionInfo]::GetVersionInfo($Exe).FileVersion) -ge [Version]'2.81' } catch { $modern = $false } }
-  if ($modern -and $AttemptId) { $a += $AttemptId }
-  elseif ($UserFiles -and $SharedLog -and (Test-Path -LiteralPath $Log)) { try { Copy-Item -LiteralPath $Log -Destination $SharedLog -Force } catch {} }
-  if ($tray) { $a += '/tray' }
-  Start-Process -FilePath $Exe -ArgumentList $a
+  if ($modern) {
+    $a = @('--nach-update')
+    if ($AttemptId) { $a += $AttemptId }
+    if ($tray) { $a += '/tray' }
+    Start-Process -FilePath $Exe -ArgumentList $a
+    return
+  }
+  if ($tray) { Start-Process -FilePath $Exe -ArgumentList @('/tray') } else { Start-Process -FilePath $Exe }
+  Show-Result $(if ($UserFiles) { $Log } else { $workLog })
 }
 # Ergebnis festhalten: ohne Adminrechte in der Datei je Versuch im Temp-Ordner; mit Adminrechten ($UserFiles = $false)
 # nichts im Temp-Ordner des Benutzers schreiben, sondern nur im geschuetzten Arbeitsordner
@@ -2091,7 +2252,7 @@ if ($Pipe) {
   $end = (Get-Date).AddMinutes(15)
   while ((Get-Date) -lt $end) {
     if (Test-Path -LiteralPath $StartFile) {
-      $s = [string](Get-Content -LiteralPath $StartFile -TotalCount 1)
+      $s = [string](Read-Small $StartFile)
       Remove-Item -LiteralPath $StartFile -Force
       if ($s.Trim() -match '^[0-9]{1,10}$') { $Installer = [int]$s.Trim() }
       break
@@ -2135,28 +2296,36 @@ if ($Pipe) {
 } else {
   try { [string]$Installer | Out-File -LiteralPath $AckFile -Encoding ascii } catch { exit }
 }
-# $true = laeuft noch. WAIT_OBJECT_0 (0) = beendet, WAIT_TIMEOUT (258) = laeuft; WAIT_FAILED: Fehlercode merken und
-# ab dann ueber die Prozess-ID pruefen
+# $true = laeuft noch. Liegt das Ergebnis dieses Versuchs vor, ist das Skript fertig (es schreibt es als Letztes).
+# WAIT_OBJECT_0 (0) = beendet, WAIT_TIMEOUT (258) = laeuft; WAIT_FAILED: Fehlercode merken und ab dann ueber die
+# Prozess-ID pruefen. Im Rueckfall gilt ein Prozess mit anderer Startzeit nicht als das Update.
+# $endConfirmed: Ende belegt (Ergebnisdatei, Handle signalisiert, kein Prozess mit der ID, andere Startzeit). Nur dann
+# darf der Versuchsordner geloescht werden; sonst bleibt er fuer die spaetere Bereinigung.
+$unclearEnd = $null
+$endConfirmed = $false
 function Test-Installer {
+  if (Test-Path -LiteralPath $workLog) { $script:endConfirmed = $true; return $false }
   if ($hInst -ne [IntPtr]::Zero) {
     $r = $k32::WaitForSingleObject($hInst, 0)
-    if ($r -eq 0) { return $false }
+    if ($r -eq 0) { $script:endConfirmed = $true; return $false }
     if ($r -eq 258) { return $true }
     $script:waitNote = 'Warten auf das Update fehlgeschlagen (Windows-Fehler ' + [System.Runtime.InteropServices.Marshal]::GetLastWin32Error() + '), Rueckfall auf die Prozess-ID.'
     try { [void]$k32::CloseHandle($hInst) } catch {}
     $script:hInst = [IntPtr]::Zero
   }
-  if (-not (Get-Process -Id $Installer -ErrorAction SilentlyContinue)) { return $false }
-  $now = $null
-  if ($installerStart) { $now = Get-StartTicks ([IntPtr]::Zero) $Installer; if ($now -and $now -ne $installerStart) { return $false } }
-  # Ohne vergleichbare Startzeit: Abschluss ueber das Ergebnis genau dieses Versuchs erkennen. Das Skript
-  # veroeffentlicht Update-<Kennung>.log als Letztes; steht die Datei seit 10 s, gilt das Update als beendet (eine
-  # wiederverwendete Prozess-ID haelt den Neustart dann nicht auf).
-  if (-not ($installerStart -and $now) -and (Test-Path -LiteralPath $workLog)) {
-    if (-not $script:logSeen) { $script:logSeen = Get-Date }
-    elseif (((Get-Date) - $script:logSeen).TotalSeconds -ge 10) { return $false }
+  if (-not (Get-Process -Id $Installer -ErrorAction SilentlyContinue)) { $script:endConfirmed = $true; return $false }
+  if ($installerStart) {
+    $now = Get-StartTicks ([IntPtr]::Zero) $Installer
+    if ($now -and $now -ne $installerStart) { $script:endConfirmed = $true; return $false }
+    if ($now) { return $true }
   }
-  return $true
+  # Identitaet ungeklaert (kein Handle, keine vergleichbare Startzeit): Ein Prozess mit dieser ID beweist nichts. Dann
+  # zaehlt nur noch die Ergebnisdatei dieses Versuchs (oben); kommt sie nicht innerhalb von 2 Minuten, endet das Warten,
+  # und ohne Ergebnis wird ein unklarer Zustand gemeldet (kein Neustart).
+  if (-not $script:waitNote) { $script:waitNote = 'Das Update liess sich nur ueber die Prozess-ID verfolgen.' }
+  elseif ($script:waitNote -notmatch 'nur ueber die Prozess-ID') { $script:waitNote += ' Das Update liess sich nur ueber die Prozess-ID verfolgen.' }
+  if ($script:unclearEnd -eq $null) { $script:unclearEnd = (Get-Date).AddMinutes(2) }
+  return ((Get-Date) -lt $script:unclearEnd)
 }
 # Neustart erst nach bestaetigtem Ende des Skripts, hoechstens 15 Minuten. Bei Fristablauf Fehler melden und nicht starten.
 $end = (Get-Date).AddMinutes(15)
@@ -2174,20 +2343,29 @@ if (-not $finished) {
 }
 Start-Sleep -Milliseconds 300
 $text = $null
-if ((Test-Path -LiteralPath $workLog) -and (Get-Item -LiteralPath $workLog).Length -le 16384) { $text = Get-Content -LiteralPath $workLog -Raw -Encoding UTF8 }
+try {
+  $fs = [System.IO.File]::Open($workLog, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)
+  try {
+    $b = New-Object byte[] 16385
+    $n = 0
+    while ($n -lt 16385) { $k = $fs.Read($b, $n, 16385 - $n); if ($k -le 0) { break }; $n += $k }
+  } finally { $fs.Dispose() }
+  if ($n -le 16384) { $text = (New-Object System.Text.UTF8Encoding($false)).GetString($b, 0, $n).TrimStart([char]0xFEFF) }
+} catch {}
 if ($text) { $text = $text.Trim() }
 # Neustart nur bei eindeutigem Abschluss: installiert (OK), nichts veraendert bzw. vollstaendig zurueckgesetzt
 # (FEHLER) oder wiederhergestellt (ZURUECK), und ohne offenen Merker
 $clear = $text -and ($text -match '^(OK|FEHLER|ZURUECK) ') -and -not (Test-Path -LiteralPath (Join-Path $Work 'Wiederherstellung-offen'))
 if (-not $clear) {
-  if (-not $text) { $text = 'OFFEN Ergebnis des Updates unbekannt.' }
+  if (-not $text) { $text = 'OFFEN Ergebnis des Updates unbekannt.'; if ($waitNote) { $text += ' ' + $waitNote } }
   try { Write-Result ($text + ' Monitor Dimmer wurde nicht neu gestartet.') } catch {}
   exit
 }
 if ($UserFiles) {
   # laesst sich das Ergebnis nicht schreiben, nicht neu starten (Download-Ordner bleibt)
   try { Write-Result $text } catch { exit }
-  if ($Attempt) { Remove-Item -LiteralPath $Attempt -Recurse -Force }
+  # Versuchsordner (Eingabedateien des Updates) nur bei belegtem Ende loeschen
+  if ($Attempt -and $endConfirmed) { Remove-Item -LiteralPath $Attempt -Recurse -Force }
 }
 # alte Instanz muss beendet sein (Ladefehler kommen sehr frueh)
 $deadline = (Get-Date).AddSeconds(60)
