@@ -219,7 +219,10 @@ namespace MonitorDimmer
                 if (string.IsNullOrEmpty(path) || !Path.IsPathRooted(path)) return "kein vollständiger Pfad";
                 if (!string.Equals(Path.GetExtension(path), ".exe", StringComparison.OrdinalIgnoreCase)) return "nur .exe-Dateien werden gestartet";
                 if (ActionSeal.IsNetworkPath(path)) return "Programme auf Netzwerkpfaden werden nicht gestartet";
-                if (!File.Exists(path)) return "Datei nicht gefunden";
+                // erst ohne Zugriff auf das Ziel prüfen, ob eine Verknüpfung im Pfad liegt (Ordner, die ins Netz umleiten)
+                bool missing;
+                if (!ActionSeal.SafeToTouch(path, out missing)) return "im Pfad liegt eine Verknüpfung (Reparse Point), z. B. OneDrive";
+                if (missing || !File.Exists(path)) return "Datei nicht gefunden";
                 var fi = new FileInfo(path);
                 if ((fi.Attributes & FileAttributes.ReparsePoint) != 0) return "die Datei ist eine Verknüpfung (Reparse Point)";
                 for (var d = fi.Directory; d != null; d = d.Parent)
@@ -659,6 +662,9 @@ namespace MonitorDimmer
     /// <summary>Übersetzt die alten .bat-Skripte in Aktionen.</summary>
     internal static class ScriptImporter
     {
+        /// <summary>Zeitlimit für Regex-Abgleiche auf den alten Skripten (fremde Daten).</summary>
+        private static readonly TimeSpan RxLimit = TimeSpan.FromMilliseconds(250);
+
         /// <summary>Liefert die Aktionen aus allen Skripten dieses Typs; unbekannte Zeilen werden "Befehl ausführen".</summary>
         public static List<ActionDef> Import(DimmingProfile p, string type, string resourcesFolder, List<string> notes)
         {
@@ -666,7 +672,10 @@ namespace MonitorDimmer
             foreach (var h in p.Handlers.Where(x => string.Equals(x.Type, type, StringComparison.OrdinalIgnoreCase)))
             {
                 string args = (h.Arguments ?? "").Replace("{ResourcesFolderPath}", resourcesFolder);
-                var m = Regex.Match(args, "\"([^\"]+\\.(bat|cmd))\"|(\\S+\\.(bat|cmd))", RegexOptions.IgnoreCase);
+                Match m;
+                // Zeitlimit (fremde Daten): Zeitüberschreitung = nicht eindeutig prüfbar, Skript nicht übernehmen
+                try { m = Regex.Match(args, "\"([^\"]+\\.(bat|cmd))\"|(\\S+\\.(bat|cmd))", RegexOptions.IgnoreCase, RxLimit); }
+                catch (RegexMatchTimeoutException) { notes.Add("Aufruf nicht übernommen (nicht eindeutig prüfbar)"); continue; }
                 string bat = m.Success ? Environment.ExpandEnvironmentVariables(m.Groups[1].Success ? m.Groups[1].Value : m.Groups[3].Value) : null;
                 if (bat == null || !File.Exists(bat))
                 {
@@ -675,14 +684,24 @@ namespace MonitorDimmer
                     continue;
                 }
                 var vars = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                int lineNo = 0;
                 foreach (var raw in File.ReadAllLines(bat, Encoding.GetEncoding(850)))
                 {
+                    lineNo++;
                     string line = raw.Trim();
-                    // SET "NAME=Wert" merken und %NAME% in den folgenden Zeilen ersetzen
-                    var sv = Regex.Match(line, "^set\\s+\"?([A-Za-z0-9_]+)=([^\"]*)\"?$", RegexOptions.IgnoreCase);
-                    if (sv.Success) { vars[sv.Groups[1].Value] = sv.Groups[2].Value; continue; }
-                    foreach (var kv in vars) line = Regex.Replace(line, "%" + Regex.Escape(kv.Key) + "%", kv.Value.Replace("$", "$$"), RegexOptions.IgnoreCase);
-                    foreach (var a in ParseLines(line)) result.Add(a);
+                    try
+                    {
+                        // SET "NAME=Wert" merken und %NAME% in den folgenden Zeilen ersetzen
+                        var sv = Regex.Match(line, "^set\\s+\"?([A-Za-z0-9_]+)=([^\"]*)\"?$", RegexOptions.IgnoreCase, RxLimit);
+                        if (sv.Success) { vars[sv.Groups[1].Value] = sv.Groups[2].Value; continue; }
+                        foreach (var kv in vars) line = Regex.Replace(line, "%" + Regex.Escape(kv.Key) + "%", kv.Value.Replace("$", "$$"), RegexOptions.IgnoreCase, RxLimit);
+                        foreach (var a in ParseLines(line).ToList()) result.Add(a);
+                    }
+                    catch (RegexMatchTimeoutException)
+                    {
+                        // nicht eindeutig prüfbar: Zeile nicht übernehmen (auch nicht als „Befehl ausführen“)
+                        notes.Add(Path.GetFileName(bat) + ", Zeile " + lineNo + " nicht übernommen (nicht eindeutig prüfbar)");
+                    }
                 }
                 notes.Add(Path.GetFileName(bat));
             }
@@ -692,7 +711,7 @@ namespace MonitorDimmer
         /// <summary>Eine Zeile kann mehrere Aktionen ergeben (FOR %%D IN (a b c) DO CALL :DienstStoppen %%D).</summary>
         private static IEnumerable<ActionDef> ParseLines(string l)
         {
-            var f = Regex.Match(l, "^for\\s+%%\\w\\s+in\\s+\\(([^)]*)\\)\\s+do\\s+call\\s+:(\\w+)", RegexOptions.IgnoreCase);
+            var f = Regex.Match(l, "^for\\s+%%\\w\\s+in\\s+\\(([^)]*)\\)\\s+do\\s+call\\s+:(\\w+)", RegexOptions.IgnoreCase, RxLimit);
             if (f.Success)
             {
                 string sub = f.Groups[2].Value.ToLowerInvariant();
@@ -717,7 +736,7 @@ namespace MonitorDimmer
             Match m;
 
             // Unterprogramm-Aufrufe der Batch: CALL :Beenden x.exe "Name"
-            m = Regex.Match(l, "^call\\s+:(\\w+)\\s+\"?([^\"\\s]+)\"?", RegexOptions.IgnoreCase);
+            m = Regex.Match(l, "^call\\s+:(\\w+)\\s+\"?([^\"\\s]+)\"?", RegexOptions.IgnoreCase, RxLimit);
             if (m.Success)
             {
                 string sub = m.Groups[1].Value.ToLowerInvariant();
@@ -729,34 +748,34 @@ namespace MonitorDimmer
             if (low.StartsWith("call ")) return null;
 
             // NirCmd direkt aufgerufen: "...\nircmd.exe" setdefaultsounddevice "Gerät"
-            m = Regex.Match(l, "nircmd\\.exe\"?\\s+setdefaultsounddevice\\s+\"?([^\"]+?)\"?(\\s+\\d)?\\s*$", RegexOptions.IgnoreCase);
+            m = Regex.Match(l, "nircmd\\.exe\"?\\s+setdefaultsounddevice\\s+\"?([^\"]+?)\"?(\\s+\\d)?\\s*$", RegexOptions.IgnoreCase, RxLimit);
             if (m.Success && !low.StartsWith("start ")) return new ActionDef { Type = "AudioDevice", Value = m.Groups[1].Value.Trim() };
 
             // Prozess-Schleife: for /f ... tasklist /FI "IMAGENAME eq x.exe"
-            m = Regex.Match(l, "IMAGENAME\\s+eq\\s+([^\"']+?)\\s*[\"']", RegexOptions.IgnoreCase);
+            m = Regex.Match(l, "IMAGENAME\\s+eq\\s+([^\"']+?)\\s*[\"']", RegexOptions.IgnoreCase, RxLimit);
             if (m.Success) return new ActionDef { Type = "KillProcess", Value = m.Groups[1].Value.Trim() };
-            m = Regex.Match(l, "^taskkill\\b.*?/IM\\s+\"?([^\"\\s]+)", RegexOptions.IgnoreCase);
+            m = Regex.Match(l, "^taskkill\\b.*?/IM\\s+\"?([^\"\\s]+)", RegexOptions.IgnoreCase, RxLimit);
             if (m.Success) return new ActionDef { Type = "KillProcess", Value = m.Groups[1].Value };
 
             string[] ignore = { "@echo", "echo", "rem", "::", "mode ", "set ", "goto", ":", "ping", "sc query", "if ", ")", "taskkill", "for ", "timeout", "cls", "exit", "pause", "setlocal", "endlocal", "color", "title", "net session", "chcp" };
             if (ignore.Any(x => low.StartsWith(x))) return null;
 
-            m = Regex.Match(l, "^powercfg(\\.exe)?\\s+/setactive\\s+([0-9a-f-]{36}|scheme_\\w+)", RegexOptions.IgnoreCase);
+            m = Regex.Match(l, "^powercfg(\\.exe)?\\s+/setactive\\s+([0-9a-f-]{36}|scheme_\\w+)", RegexOptions.IgnoreCase, RxLimit);
             if (m.Success) return new ActionDef { Type = "PowerPlan", Value = ActionExecutor.PlanAlias(m.Groups[2].Value).ToLowerInvariant() };
 
-            m = Regex.Match(l, "^schtasks(\\.exe)?\\s+/run\\s+/tn\\s+\"([^\"]+)\"", RegexOptions.IgnoreCase);
+            m = Regex.Match(l, "^schtasks(\\.exe)?\\s+/run\\s+/tn\\s+\"([^\"]+)\"", RegexOptions.IgnoreCase, RxLimit);
             if (m.Success) return new ActionDef { Type = "TaskRun", Value = m.Groups[2].Value };
-            m = Regex.Match(l, "^schtasks(\\.exe)?\\s+/change\\s+/tn\\s+\"([^\"]+)\"\\s+/(enable|disable)", RegexOptions.IgnoreCase);
+            m = Regex.Match(l, "^schtasks(\\.exe)?\\s+/change\\s+/tn\\s+\"([^\"]+)\"\\s+/(enable|disable)", RegexOptions.IgnoreCase, RxLimit);
             if (m.Success) return new ActionDef { Type = m.Groups[3].Value.ToLowerInvariant() == "enable" ? "TaskEnable" : "TaskDisable", Value = m.Groups[2].Value };
 
-            m = Regex.Match(l, "^net\\s+(stop|start)\\s+\"?([^\">]+?)\"?\\s*(/y)?\\s*(>.*)?$", RegexOptions.IgnoreCase);
+            m = Regex.Match(l, "^net\\s+(stop|start)\\s+\"?([^\">]+?)\"?\\s*(/y)?\\s*(>.*)?$", RegexOptions.IgnoreCase, RxLimit);
             if (m.Success) return new ActionDef { Type = m.Groups[1].Value.ToLowerInvariant() == "stop" ? "StopService" : "StartService", Value = m.Groups[2].Value.Trim() };
 
-            m = Regex.Match(l, "^start\\s+\"[^\"]*\"\\s+\"([^\"]+)\"\\s*(.*)$", RegexOptions.IgnoreCase);
+            m = Regex.Match(l, "^start\\s+\"[^\"]*\"\\s+\"([^\"]+)\"\\s*(.*)$", RegexOptions.IgnoreCase, RxLimit);
             if (m.Success)
             {
                 string exe = m.Groups[1].Value, rest = m.Groups[2].Value.Trim();
-                var sd = Regex.Match(rest, "^setdefaultsounddevice\\s+\"?([^\"]+?)\"?(\\s+\\d)?$", RegexOptions.IgnoreCase);
+                var sd = Regex.Match(rest, "^setdefaultsounddevice\\s+\"?([^\"]+?)\"?(\\s+\\d)?$", RegexOptions.IgnoreCase, RxLimit);
                 if (Path.GetFileName(exe).Equals("nircmd.exe", StringComparison.OrdinalIgnoreCase) && sd.Success)
                     return new ActionDef { Type = "AudioDevice", Value = sd.Groups[1].Value.Trim() };
                 return new ActionDef { Type = "StartProgram", Value = exe, Arguments = rest };

@@ -45,7 +45,14 @@ namespace MonitorDimmer
             "crash|report|uploader|cleanup|touchup|activation|cefprocess|cefsharp|updater|patcher|helper|overlay|pnkbstr|punkbuster|" +
             "dxdiag|vc_|vcredist|quicksfv|unrar|7z|uninst|register|regsvr|webview|subprocess|dumper|bugsplat|sentry|" +
             "unitycrash|errorhandler|anticheat|ezfrd|eossdk|steamservice|xinput",
-            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(250));
+
+        /// <summary>Kein Spiel? Zeitüberschreitung der Prüfung = nicht eindeutig, nicht vorschlagen.</summary>
+        private static bool IsNotAGame(string name)
+        {
+            try { return NotAGame.IsMatch(name); }
+            catch (RegexMatchTimeoutException) { return true; }
+        }
 
         /// <summary>Ordner, die durchsucht werden: aus der Konfiguration, sonst C:\Spiele, plus X:\Spiele aus den fehlenden Pfaden.</summary>
         public static List<string> Roots(AppConfig cfg, IEnumerable<string> missing)
@@ -174,7 +181,7 @@ namespace MonitorDimmer
 
                 string name = Path.GetFileName(folder);
                 var candidates = exes.Where(f => !InSkippedFolder(f, prefix)).ToList();
-                var games = candidates.Where(f => !NotAGame.IsMatch(Path.GetFileNameWithoutExtension(f))).ToList();
+                var games = candidates.Where(f => !IsNotAGame(Path.GetFileNameWithoutExtension(f))).ToList();
                 if (games.Count == 0) continue;
                 results.Add(new Result
                 {
@@ -211,10 +218,16 @@ namespace MonitorDimmer
             score -= (rel.Split('\\').Length - 1) * 2;
             try { score += (int)Math.Min(60, new FileInfo(file).Length / (1024 * 1024) / 2); } catch { }
             // Gemeinsame Wortteile mit dem Ordnernamen (z. B. "SnowRunner" / "snowrunner.exe")
-            var words = Regex.Split(folderName.ToLowerInvariant(), "[^a-z0-9]+").Where(w => w.Length >= 3).ToList();
-            string compact = Regex.Replace(folderName.ToLowerInvariant(), "[^a-z0-9]", "");
-            if (compact.Length >= 3 && (compact.Contains(Regex.Replace(n, "[^a-z0-9]", "")) || Regex.Replace(n, "[^a-z0-9]", "").Contains(compact))) score += 25;
-            score += words.Count(w => n.Contains(w)) * 8;
+            try
+            {
+                TimeSpan limit = TimeSpan.FromMilliseconds(250);
+                var words = Regex.Split(folderName.ToLowerInvariant(), "[^a-z0-9]+", RegexOptions.None, limit).Where(w => w.Length >= 3).ToList();
+                string compact = Regex.Replace(folderName.ToLowerInvariant(), "[^a-z0-9]", "", RegexOptions.None, limit);
+                string plain = Regex.Replace(n, "[^a-z0-9]", "", RegexOptions.None, limit);
+                if (compact.Length >= 3 && (compact.Contains(plain) || plain.Contains(compact))) score += 25;
+                score += words.Count(w => n.Contains(w)) * 8;
+            }
+            catch (RegexMatchTimeoutException) { } // ohne Namensbonus
             return score;
         }
 

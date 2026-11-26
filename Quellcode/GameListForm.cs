@@ -366,6 +366,10 @@ namespace MonitorDimmer
             if (p.Expanded.IndexOf('\\') < 0) return EntryState.FileNameOnly;
             if (p.Expanded.IndexOf("\\WindowsApps\\", StringComparison.OrdinalIgnoreCase) >= 0) return EntryState.NotCheckable;
             if (Demo.Active) return EntryState.Found; // Beispieldaten für die Screenshots
+            // automatische Prüfung beim Öffnen: Netzwerkpfade und Pfade über Verknüpfungen (z. B. OneDrive) nicht anfassen
+            bool missing;
+            if (!ActionSeal.SafeToTouch(p.Expanded, out missing)) return EntryState.NotCheckable;
+            if (missing) return EntryState.Missing;
             try { return File.Exists(p.Expanded) ? EntryState.Found : EntryState.Missing; }
             catch { return EntryState.NotCheckable; }
         }

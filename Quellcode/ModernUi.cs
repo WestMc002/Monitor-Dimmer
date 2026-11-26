@@ -78,7 +78,8 @@ namespace MonitorDimmer
             try
             {
                 string p = Path.Combine(Application.StartupPath, "Resources", "MonitorDimmer.ico");
-                if (File.Exists(p))
+                bool missing; // Programmordner im Netzwerk oder hinter einer Verknüpfung: nicht von selbst lesen
+                if (ActionSeal.SafeToTouch(p, out missing) && !missing && File.Exists(p))
                     using (var ico = new Icon(p, size, size)) return ico.ToBitmap();
                 using (var ico = Icon.ExtractAssociatedIcon(Application.ExecutablePath))
                     return new Bitmap(ico.ToBitmap(), size, size);
@@ -368,7 +369,8 @@ namespace MonitorDimmer
                 try
                 {
                     string p = Path.Combine(Application.StartupPath, "Resources", "GS-Logo.png");
-                    if (File.Exists(p))
+                    bool missing;
+                    if (ActionSeal.SafeToTouch(p, out missing) && !missing && File.Exists(p))
                         using (var fs = new FileStream(p, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
                         using (var img = Image.FromStream(fs))
                             _logo = new Bitmap(img);

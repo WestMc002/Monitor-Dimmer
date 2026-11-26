@@ -5,6 +5,13 @@ Aktuelle Version: siehe Info-Fenster (Klick auf die Versionsnummer) bzw.
 Eigenschaften > Details der EXE. Vorgänger: Monitor Dimmer 1.3.2017.0120
 
 Versionen:
+  2.86.2026.1126 Sicherheit: Von sich aus (beim Start, beim Prüfen der
+                 Aktionen und in der Spieleliste) liest Monitor Dimmer nur
+                 noch lokale Dateien ohne Umleitung; Netzwerkpfade und Pfade
+                 über Verknüpfungen (z. B. OneDrive) fasst es nicht an, mit
+                 Adminrechten gelten sie als nicht geschützt; alle
+                 Musterprüfungen auf fremden Daten (alte Skripte, Journal,
+                 Manifest) haben ein Zeitlimit
   2.85.2026.1125 Update: Der Neustarthelfer liest seine Steuerdateien
                  begrenzt (höchstens 256 Bytes, ein Zugriff); kann er das
                  Update nur über die Prozess-ID verfolgen, wartet er höchstens
@@ -479,6 +486,9 @@ aber unter %LOCALAPPDATA% und lässt sich von jedem Programm ändern. Deshalb:
   von cmd.exe (cmd /d); eine weitere Eingabeaufforderung im Befehl braucht
   mit Adminrechten ebenfalls /d, "start" mit einer .bat-Datei ist dann
   nicht erlaubt.
+  Dateien im Netzwerk oder hinter einer Verknüpfung (z. B. OneDrive) liest
+  Monitor Dimmer nicht von selbst; mit Adminrechten gelten sie als nicht
+  geschützt, die Aktion läuft dann nicht.
   Skripte (.bat, .cmd, .ps1), die eine solche Aktion aufruft, prüft Monitor
   Dimmer vorher: Jeder Start von PowerShell braucht -NoProfile vor dem
   Skriptargument (-Command, -File ...), jeder Start von cmd /d vor /c - und

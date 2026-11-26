@@ -279,7 +279,7 @@ namespace MonitorDimmer
             if (values["Programm"] != "Monitor Dimmer") { detail = "Das Manifest gehört zu „" + values["Programm"] + "“, nicht zu Monitor Dimmer."; return Invalid; }
             if (values["Version"] != version) { detail = "Das Manifest nennt Version " + values["Version"] + ", das Release " + version + "."; return Invalid; }
             if (values["Datei"] != AssetName(version)) { detail = "Das Manifest nennt die Datei „" + values["Datei"] + "“."; return Invalid; }
-            if (!Regex.IsMatch(values["SHA256"], "^[0-9a-f]{64}$")) { detail = "Die Prüfsumme im Manifest ist ungültig."; return Invalid; }
+            if (!Rx(values["SHA256"], "^[0-9a-f]{64}$")) { detail = "Die Prüfsumme im Manifest ist ungültig."; return Invalid; }
             sha = values["SHA256"].ToUpperInvariant();
             return null;
         }
@@ -448,7 +448,7 @@ namespace MonitorDimmer
         /// <summary>Gültige Versuchskennung (32 Hex-Zeichen, klein)?</summary>
         public static bool IsAttemptId(string id)
         {
-            return id != null && Regex.IsMatch(id, "^[0-9a-f]{32}$");
+            return id != null && Rx(id, "^[0-9a-f]{32}$");
         }
 
         static int busy;
@@ -889,7 +889,7 @@ namespace MonitorDimmer
             {
                 string data = Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData);
                 if (!string.Equals(Path.GetDirectoryName(dir), data, StringComparison.OrdinalIgnoreCase)) return false;
-                if (!Regex.IsMatch(Path.GetFileName(dir), "^MonitorDimmer-Update-" + TargetId + "-[0-9a-f]{32}$")) return false;
+                if (!Rx(Path.GetFileName(dir), "^MonitorDimmer-Update-" + TargetId + "-[0-9a-f]{32}$")) return false;
                 DirectoryInfo di = new DirectoryInfo(dir);
                 if ((di.Attributes & FileAttributes.ReparsePoint) != 0) return false;
                 System.Security.Principal.SecurityIdentifier owner = (System.Security.Principal.SecurityIdentifier)
@@ -951,7 +951,24 @@ namespace MonitorDimmer
             catch { return false; }
         }
 
+        /// <summary>Zeitlimit für Regex-Abgleiche auf fremden Daten (Journal, Manifest, Ordnernamen).</summary>
+        static readonly TimeSpan RxTimeout = TimeSpan.FromMilliseconds(250);
+
+        /// <summary>Regex mit Zeitlimit; eine Zeitüberschreitung gilt als „passt nicht“ (nicht eindeutig prüfbar).</summary>
+        static bool Rx(string input, string pattern)
+        {
+            try { return Regex.IsMatch(input ?? "", pattern, RegexOptions.None, RxTimeout); }
+            catch (RegexMatchTimeoutException) { return false; }
+        }
+
+        /// <summary>Journal lesen; eine Zeitüberschreitung beim Prüfen gilt als ungeklärt (wie ein unlesbares Journal).</summary>
         static bool ReadJournal(string dir, out List<JournalEntry> entries)
+        {
+            try { return ReadJournalCore(dir, out entries); }
+            catch (RegexMatchTimeoutException) { entries = null; return false; }
+        }
+
+        static bool ReadJournalCore(string dir, out List<JournalEntry> entries)
         {
             entries = null;
             string exe = Application.ExecutablePath;
@@ -986,7 +1003,7 @@ namespace MonitorDimmer
             {
                 for (; i < lines.Length && lines[i].StartsWith("Geplant ", StringComparison.Ordinal); i++)
                 {
-                    Match g = Regex.Match(lines[i], @"^Geplant (\d+): Ziel: (.+)$");
+                    Match g = Regex.Match(lines[i], @"^Geplant (\d+): Ziel: (.+)$", RegexOptions.None, RxTimeout);
                     if (!g.Success || g.Groups[1].Value != (planned.Count + 1).ToString(System.Globalization.CultureInfo.InvariantCulture) || !allowed(g.Groups[2].Value)) return false;
                     string p = g.Groups[2].Value;
                     if (planned.Exists(x => string.Equals(x, p, StringComparison.OrdinalIgnoreCase))) return false;
@@ -1003,7 +1020,7 @@ namespace MonitorDimmer
             for (; i < lines.Length; i++)
             {
                 string line = lines[i];
-                Match e = Regex.Match(line, @"^Ersetzt (\d+)$");
+                Match e = Regex.Match(line, @"^Ersetzt (\d+)$", RegexOptions.None, RxTimeout);
                 if (e.Success)
                 {
                     if (list.Count == 0 || replacedLast || e.Groups[1].Value != list[list.Count - 1].N) return false;
@@ -1011,8 +1028,8 @@ namespace MonitorDimmer
                     continue;
                 }
                 Match m = withHash
-                    ? Regex.Match(line, @"^Vorher (\d+): (Sicherung|Neu) \| Ziel: (.+?)(?: \| Sicherungsdatei: .+? \| SHA256: ([0-9A-F]{64}))? \| Hilfsdatei: (.+)$")
-                    : Regex.Match(line, @"^Vorher (\d+): (Sicherung|Neu) \| Ziel: (.+?)()(?: \| Sicherungsdatei: .+?)? \| Hilfsdatei: (.+)$");
+                    ? Regex.Match(line, @"^Vorher (\d+): (Sicherung|Neu) \| Ziel: ([^|]+?)(?: \| Sicherungsdatei: [^|]+? \| SHA256: ([0-9A-F]{64}))? \| Hilfsdatei: ([^|]+)$", RegexOptions.None, RxTimeout)
+                    : Regex.Match(line, @"^Vorher (\d+): (Sicherung|Neu) \| Ziel: ([^|]+?)()(?: \| Sicherungsdatei: [^|]+?)? \| Hilfsdatei: ([^|]+)$", RegexOptions.None, RxTimeout);
                 if (!m.Success) return false;
                 JournalEntry entry = new JournalEntry();
                 entry.N = m.Groups[1].Value; entry.Kind = m.Groups[2].Value; entry.Dst = m.Groups[3].Value;
@@ -1962,6 +1979,16 @@ try {
 
         const string RepairScript = @"
 $ErrorActionPreference = 'Stop'
+# Regex mit Zeitlimit (250 ms) fuer das Journal (fremde Daten): Treffer als Gruppenliste, kein Treffer = $null,
+# Zeitueberschreitung = nicht eindeutig pruefbar (Abbruch ohne Aenderung, Ergebnis OFFEN)
+function Match-Rx([string]$s, [string]$p) {
+  try { $m = [regex]::Match($s, $p, [System.Text.RegularExpressions.RegexOptions]::None, [TimeSpan]::FromMilliseconds(250)) }
+  catch [System.Text.RegularExpressions.RegexMatchTimeoutException] { throw 'Das Journal ist nicht eindeutig pruefbar (Zeitlimit).' }
+  if (-not $m.Success) { return $null }
+  $g = @{}
+  for ($k = 0; $k -lt $m.Groups.Count; $k++) { $g[$k] = $m.Groups[$k].Value }
+  return $g
+}
 $result = $null
 $noRestart = $false
 $haveLock = $false
@@ -2075,12 +2102,13 @@ try {
     $i = 2
   }
   if ($format2) { $first = 'Geplant ' } elseif ($format155) { $first = 'Bereit' } else { $first = 'Vorher ' }
-  while ($i -lt $lines.Count -and -not $lines[$i].StartsWith($first)) { if ($lines[$i] -cmatch $keywords) { throw 'Das Journal ist nicht lesbar.' }; $i++ }
+  while ($i -lt $lines.Count -and -not $lines[$i].StartsWith($first)) { if (Match-Rx $lines[$i] $keywords) { throw 'Das Journal ist nicht lesbar.' }; $i++ }
   if ($format2) {
     while ($i -lt $lines.Count -and $lines[$i].StartsWith('Geplant ')) {
-      if ($lines[$i] -cnotmatch '^Geplant (\d+): Ziel: (.+)$') { throw 'Das Journal ist nicht lesbar.' }
-      if ($Matches[1] -ne [string]($planned.Count + 1) -or $allowed -notcontains $Matches[2] -or $planned -contains $Matches[2]) { throw 'Unerwarteter Eintrag im Journal.' }
-      $planned += $Matches[2]
+      $g = Match-Rx $lines[$i] '^Geplant (\d+): Ziel: (.+)$'
+      if (-not $g) { throw 'Das Journal ist nicht lesbar.' }
+      if ($g[1] -ne [string]($planned.Count + 1) -or $allowed -notcontains $g[2] -or $planned -contains $g[2]) { throw 'Unerwarteter Eintrag im Journal.' }
+      $planned += $g[2]
       $i++
     }
     if ($planned.Count -eq 0) { throw 'Das Journal ist unvollstaendig.' }
@@ -2092,15 +2120,16 @@ try {
   $replacedLast = $true
     for (; $i -lt $lines.Count; $i++) {
       $line = $lines[$i]
-      if ($line -cmatch '^Ersetzt (\d+)$') {
-        if ($entries.Count -eq 0 -or $replacedLast -or $Matches[1] -ne $entries[$entries.Count - 1].N) { throw 'Das Journal ist nicht lesbar.' }
+      $g = Match-Rx $line '^Ersetzt (\d+)$'
+      if ($g) {
+        if ($entries.Count -eq 0 -or $replacedLast -or $g[1] -ne $entries[$entries.Count - 1].N) { throw 'Das Journal ist nicht lesbar.' }
         $replacedLast = $true
         continue
       }
-      if ($withHash) { $ok = $line -cmatch '^Vorher (\d+): (Sicherung|Neu) \| Ziel: (.+?)(?: \| Sicherungsdatei: .+? \| SHA256: ([0-9A-F]{64}))? \| Hilfsdatei: (.+)$' }
-      else { $ok = $line -cmatch '^Vorher (\d+): (Sicherung|Neu) \| Ziel: (.+?)()(?: \| Sicherungsdatei: .+?)? \| Hilfsdatei: (.+)$' }
-      if (-not $ok) { throw 'Das Journal ist nicht lesbar.' }
-      $e = @{ N = $Matches[1]; Kind = $Matches[2]; Dst = $Matches[3]; Hash = [string]$Matches[4]; Tmp = $Matches[5] }
+      if ($withHash) { $g = Match-Rx $line '^Vorher (\d+): (Sicherung|Neu) \| Ziel: ([^|]+?)(?: \| Sicherungsdatei: [^|]+? \| SHA256: ([0-9A-F]{64}))? \| Hilfsdatei: ([^|]+)$' }
+      else { $g = Match-Rx $line '^Vorher (\d+): (Sicherung|Neu) \| Ziel: ([^|]+?)()(?: \| Sicherungsdatei: [^|]+?)? \| Hilfsdatei: ([^|]+)$' }
+      if (-not $g) { throw 'Das Journal ist nicht lesbar.' }
+      $e = @{ N = $g[1]; Kind = $g[2]; Dst = $g[3]; Hash = [string]$g[4]; Tmp = $g[5] }
       if ($e.N -ne [string]($entries.Count + 1) -or ($format2 -and $entries.Count -gt 0 -and -not $replacedLast) -or $allowed -notcontains $e.Dst) { throw 'Unerwarteter Eintrag im Journal.' }
       if ($format2 -and ($entries.Count -ge $planned.Count -or $planned[$entries.Count] -ne $e.Dst)) { throw 'Unerwarteter Eintrag im Journal.' }
       if ($withHash) {

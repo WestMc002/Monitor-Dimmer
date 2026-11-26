@@ -396,7 +396,15 @@ namespace MonitorDimmer
                 try
                 {
                     string full = Path.IsPathRooted(w) ? w : (string.IsNullOrEmpty(workDir) ? null : Path.Combine(workDir, w));
-                    if (full == null || !File.Exists(full)) continue;
+                    if (full == null) continue;
+                    bool missing;
+                    if (!SafeToTouch(full, out missing))
+                    {
+                        // Netzwerk oder Umleitung: nicht anfassen, aber aufnehmen (mit Adminrechten nicht geschützt)
+                        if (!r.Contains(full, StringComparer.OrdinalIgnoreCase)) r.Add(full);
+                        continue;
+                    }
+                    if (missing || !File.Exists(full)) continue;
                     full = Path.GetFullPath(full);
                     if (!r.Contains(full, StringComparer.OrdinalIgnoreCase)) r.Add(full);
                 }
@@ -599,7 +607,9 @@ namespace MonitorDimmer
                 string name = Path.GetFileName(f);
                 try
                 {
-                    if (!File.Exists(f)) continue;
+                    bool missing;
+                    if (!SafeToTouch(f, out missing)) return "Skript " + name + " liegt im Netzwerk oder hinter einer Verknüpfung und wird nicht geprüft";
+                    if (missing || !File.Exists(f)) continue;
                     if (new FileInfo(f).Length > 1024 * 1024) return "Skript " + name + " ist zu groß für die Prüfung (höchstens 1 MB)";
                     if (ext == ".ps1")
                     {
@@ -949,7 +959,11 @@ namespace MonitorDimmer
                     try
                     {
                         string p = d.Length == 0 ? name + e : Path.Combine(d, name + e);
-                        if (File.Exists(p)) return Path.GetFullPath(p);
+                        bool missing;
+                        // Netzwerk oder Umleitung (auch ein solcher PATH-Eintrag): nicht anfassen; der Treffer gilt als
+                        // nicht prüfbar und damit als nicht geschützt
+                        if (!SafeToTouch(p, out missing)) return p;
+                        if (!missing && File.Exists(p)) return Path.GetFullPath(p);
                     }
                     catch { }
                 }
@@ -971,8 +985,10 @@ namespace MonitorDimmer
         {
             try
             {
+                bool missing;
+                if (!SafeToTouch(path, out missing)) return "nicht lokal"; // Netzwerk oder Umleitung: nicht von selbst lesen
                 var fi = new FileInfo(path);
-                if (!fi.Exists) return "fehlt";
+                if (missing || !fi.Exists) return "fehlt";
                 using (var sha = SHA256.Create())
                 using (var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
                     return BitConverter.ToString(sha.ComputeHash(fs)).Replace("-", "");
@@ -1002,7 +1018,9 @@ namespace MonitorDimmer
             foreach (string f in files)
             {
                 if (string.IsNullOrEmpty(f) || f.StartsWith("?")) continue;
-                if (!File.Exists(f)) continue; // nicht vorhanden: nichts auszutauschen, der Start scheitert ohnehin
+                bool missing;
+                if (!SafeToTouch(f, out missing)) return f; // Netzwerk oder Umleitung: nicht anfassen, gilt als nicht geschützt
+                if (missing || !File.Exists(f)) continue; // nicht vorhanden: nichts auszutauschen, der Start scheitert ohnehin
                 if (!Protected(f)) return f;
             }
             return null;
@@ -1010,6 +1028,11 @@ namespace MonitorDimmer
 
         public static string UnprotectedMessage(string file)
         {
+            bool missing;
+            if (!SafeToTouch(file, out missing))
+                return "„" + file + "“ liegt im Netzwerk oder hinter einer Verknüpfung (z. B. OneDrive). Mit Administratorrechten " +
+                       "startet Monitor Dimmer nur Skripte und Programme aus geschützten lokalen Ordnern (z. B. unter „Programme“) " +
+                       "und liest Dateien im Netzwerk oder hinter Verknüpfungen nicht von selbst.";
             string dir = Path.GetDirectoryName(file) ?? file;
             return "„" + file + "“ liegt in einem Ordner, in den auch Programme ohne Administratorrechte schreiben dürfen. " +
                    "Mit Administratorrechten startet Monitor Dimmer nur Skripte und Programme aus geschützten Ordnern " +
@@ -1039,6 +1062,37 @@ namespace MonitorDimmer
                 return t == DriveType.Network || t == DriveType.Unknown || t == DriveType.NoRootDirectory;
             }
             catch { return true; }
+        }
+
+        /// <summary>
+        /// Automatische Dateizugriffe (globale Vorgabe „Automatische Dateizugriffe“): Nur lokale Pfade ohne Umleitung
+        /// werden angefasst. Jeder vorhandene Pfadteil wird ab der Wurzel auf einen Reparse Point geprüft, ohne ihm zu
+        /// folgen (OneDrive zählt ebenfalls als Umleitung); im Zweifel gilt der Pfad als nicht lokal. missing = ein
+        /// Pfadteil fehlt (dann gibt es auch die Datei nicht).
+        /// </summary>
+        public static bool SafeToTouch(string path, out bool missing)
+        {
+            missing = false;
+            if (string.IsNullOrEmpty(path) || IsNetworkPath(path)) return false;
+            try
+            {
+                string full = Path.GetFullPath(Environment.ExpandEnvironmentVariables(path.Trim()));
+                if (full.StartsWith(@"\?")) full = full.Substring(4);
+                string root = Path.GetPathRoot(full);
+                if (string.IsNullOrEmpty(root) || root.Length != 3 || root[1] != ':') return false;
+                string current = root;
+                foreach (string part in full.Substring(root.Length).Split(new[] { '\\' }, StringSplitOptions.RemoveEmptyEntries))
+                {
+                    current = Path.Combine(current, part);
+                    FileAttributes attributes;
+                    try { attributes = File.GetAttributes(current); }
+                    catch (FileNotFoundException) { missing = true; return true; }
+                    catch (DirectoryNotFoundException) { missing = true; return true; }
+                    if ((attributes & FileAttributes.ReparsePoint) != 0) return false;
+                }
+                return true;
+            }
+            catch { return false; }
         }
 
         /// <summary>Datei und alle Ordner darüber nur von Administratoren änderbar? Im Zweifel (nicht lesbar) nein.</summary>

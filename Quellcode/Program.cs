@@ -26,6 +26,9 @@ namespace MonitorDimmer
         [STAThread]
         private static void Main(string[] args)
         {
+            // Zeitlimit für alle Regex-Abgleiche ohne eigenes Limit (fremde Daten: Dateien, Skripte, Befehle, Journal,
+            // Manifest). Muss vor der ersten Regex-Verwendung stehen. Zeitüberschreitung = nicht eindeutig prüfbar.
+            AppDomain.CurrentDomain.SetData("REGEX_DEFAULT_MATCH_TIMEOUT", TimeSpan.FromMilliseconds(250));
             _baseDir = AppDomain.CurrentDomain.BaseDirectory.TrimEnd('\\');
 
             // Screenshots mit Beispieldaten (hell und dunkel) für GitHub, z. B. aus der Erstellen.bat
@@ -158,8 +161,9 @@ namespace MonitorDimmer
         /// <summary>Name für /config: Buchstaben, Ziffern, Leerzeichen, _ - . (höchstens 64 Zeichen, kein „..“, kein Pfad).</summary>
         internal static bool IsValidConfigName(string name)
         {
-            return !string.IsNullOrEmpty(name) && name.Length <= 64 && !name.Contains("..") &&
-                   System.Text.RegularExpressions.Regex.IsMatch(name, @"^[A-Za-z0-9][A-Za-z0-9 _.\-]*$");
+            if (string.IsNullOrEmpty(name) || name.Length > 64 || name.Contains("..")) return false;
+            try { return System.Text.RegularExpressions.Regex.IsMatch(name, @"^[A-Za-z0-9][A-Za-z0-9 _.\-]*$", System.Text.RegularExpressions.RegexOptions.None, TimeSpan.FromMilliseconds(250)); }
+            catch (System.Text.RegularExpressions.RegexMatchTimeoutException) { return false; }
         }
 
         /// <summary>Datei im Ordner: vollständigen Pfad bilden und prüfen, dass er wirklich in diesem Ordner liegt.</summary>

@@ -548,7 +548,8 @@ namespace MonitorDimmer
 
         private static bool SafeExists(string path)
         {
-            try { return File.Exists(path); } catch { return false; }
+            bool missing;
+            try { return ActionSeal.SafeToTouch(path, out missing) && !missing && File.Exists(path); } catch { return false; }
         }
 
         // ================================================================== Konfiguration
@@ -677,7 +678,8 @@ namespace MonitorDimmer
                 {
                     string p = _config.TrayIconFile;
                     if (!Path.IsPathRooted(p)) p = Path.Combine(_resourcesDir, p);
-                    if (File.Exists(p))
+                    bool missing; // beim Start nur lokale Pfade ohne Umleitung lesen
+                    if (ActionSeal.SafeToTouch(p, out missing) && !missing && File.Exists(p))
                     {
                         var ico = new Icon(p, SystemInformation.SmallIconSize);
                         if (_icon != null) _icon.Dispose();
